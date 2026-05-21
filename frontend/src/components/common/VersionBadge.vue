@@ -12,7 +12,7 @@
         ]"
         :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span v-if="currentVersionLabel" class="font-medium">{{ currentVersionLabel }}</span>
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
@@ -81,9 +81,9 @@
               <div class="mb-4 text-center">
                 <div class="inline-flex items-center gap-2">
                   <span
-                    v-if="currentVersion"
+                    v-if="currentVersionLabel"
                     class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >v{{ currentVersion }}</span
+                    >{{ currentVersionLabel }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
@@ -375,7 +375,7 @@
 
     <!-- Non-admin: Simple static version text -->
     <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
-      v{{ version }}
+      {{ versionLabel }}
     </span>
   </div>
 </template>
@@ -386,6 +386,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import { performUpdate, restartService } from '@/api/admin/system'
 import Icon from '@/components/icons/Icon.vue'
+import { formatSumireVersionLabel } from '@/utils/versionLabel'
 
 const { t } = useI18n()
 
@@ -404,6 +405,8 @@ const dropdownRef = ref<HTMLElement | null>(null)
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
+const currentVersionLabel = computed(() => formatSumireVersionLabel(currentVersion.value))
+const versionLabel = computed(() => formatSumireVersionLabel(props.version))
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)

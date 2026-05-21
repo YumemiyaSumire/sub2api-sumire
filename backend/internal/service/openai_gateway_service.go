@@ -6302,7 +6302,13 @@ func deriveOpenAIReasoningEffortFromModel(model string) string {
 		return ""
 	}
 
-	return normalizeOpenAIReasoningEffort(parts[len(parts)-1])
+	if effort := normalizeOpenAIReasoningEffort(parts[len(parts)-1]); effort != "" {
+		return effort
+	}
+	if canonicalizeOpenAIModelAliasSpelling(model) == "gpt-5.5" {
+		return "medium"
+	}
+	return ""
 }
 
 func extractOpenAIRequestMetaFromBody(body []byte) (model string, stream bool, promptCacheKey string) {

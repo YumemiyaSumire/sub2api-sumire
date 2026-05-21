@@ -86,6 +86,20 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 			wantValue: "high",
 		},
 		{
+			name:      "gpt-5.5 defaults to medium when effort is missing",
+			body:      []byte(`{"input":"hi"}`),
+			model:     "gpt-5.5",
+			wantNil:   false,
+			wantValue: "medium",
+		},
+		{
+			name:      "gpt5.5 alias defaults to medium when effort is missing",
+			body:      []byte(`{"input":"hi"}`),
+			model:     "openai/gpt5.5",
+			wantNil:   false,
+			wantValue: "medium",
+		},
+		{
 			name:    "未知后缀不返回",
 			body:    []byte(`{"input":"hi"}`),
 			model:   "gpt-5-unknown",
