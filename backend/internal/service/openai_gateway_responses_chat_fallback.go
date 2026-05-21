@@ -53,6 +53,12 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	clientStream := responsesReq.Stream
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
 	serviceTier := extractOpenAIServiceTierFromBody(body)
+	if responsesReq.Reasoning == nil && reasoningEffort != nil {
+		responsesReq.Reasoning = &apicompat.ResponsesReasoning{
+			Effort:  *reasoningEffort,
+			Summary: "auto",
+		}
+	}
 
 	chatReq, err := apicompat.ResponsesToChatCompletionsRequest(&responsesReq)
 	if err != nil {
@@ -66,6 +72,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
+	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
+		billingModel = alias.BaseModel
+	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	chatReq.Model = upstreamModel
 	if clientStream {

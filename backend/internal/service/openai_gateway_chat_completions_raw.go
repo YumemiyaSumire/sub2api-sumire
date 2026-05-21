@@ -80,12 +80,22 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
+		billingModel = alias.BaseModel
+	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 
 	// 3. Rewrite model in body (no protocol conversion)
 	upstreamBody := body
 	if upstreamModel != originalModel {
 		upstreamBody = ReplaceModelInBody(body, upstreamModel)
+	}
+	if reasoningEffort != nil && !openAIRequestBodyHasReasoningEffort(upstreamBody) {
+		var err error
+		upstreamBody, err = sjson.SetBytes(upstreamBody, "reasoning_effort", *reasoningEffort)
+		if err != nil {
+			return nil, fmt.Errorf("inject reasoning_effort: %w", err)
+		}
 	}
 
 	// 4. Apply OpenAI fast policy on the CC body

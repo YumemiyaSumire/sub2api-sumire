@@ -2473,6 +2473,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	// 对所有请求执行模型映射（包含 Codex CLI）。
 	billingModel := account.GetMappedModel(reqModel)
+	if alias := parseOpenAIReasoningModelAlias(reqModel); alias.Effort != "" {
+		if billingModel == reqModel {
+			billingModel = alias.BaseModel
+		}
+		if injectOpenAIReasoningEffort(reqBody, alias.Effort) {
+			bodyModified = true
+			disablePatch()
+		}
+	}
 	if billingModel != reqModel {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", reqModel, billingModel, account.Name, isCodexCLI)
 		reqBody["model"] = billingModel
@@ -6192,6 +6201,62 @@ func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.C
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
 		s.updateCodexUsageSnapshot(ctx, accountID, snapshot)
 	}
+}
+
+type openAIReasoningModelAlias struct {
+	BaseModel string
+	Effort    string
+}
+
+func parseOpenAIReasoningModelAlias(model string) openAIReasoningModelAlias {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return openAIReasoningModelAlias{}
+	}
+
+	lastSep := -1
+	for _, sep := range []string{"-", "_", " "} {
+		if idx := strings.LastIndex(model, sep); idx > lastSep {
+			lastSep = idx
+		}
+	}
+	if lastSep <= 0 || lastSep >= len(model)-1 {
+		return openAIReasoningModelAlias{}
+	}
+
+	effort := normalizeOpenAIReasoningEffort(model[lastSep+1:])
+	if effort == "" {
+		return openAIReasoningModelAlias{}
+	}
+	baseModel := strings.TrimSpace(model[:lastSep])
+	if baseModel == "" || strings.HasSuffix(baseModel, "/") {
+		return openAIReasoningModelAlias{}
+	}
+	return openAIReasoningModelAlias{BaseModel: baseModel, Effort: effort}
+}
+
+func openAIRequestBodyHasReasoningEffort(body []byte) bool {
+	return gjson.GetBytes(body, "reasoning.effort").Exists() || gjson.GetBytes(body, "reasoning_effort").Exists()
+}
+
+func injectOpenAIReasoningEffort(reqBody map[string]any, effort string) bool {
+	effort = normalizeOpenAIReasoningEffort(effort)
+	if reqBody == nil || effort == "" {
+		return false
+	}
+	if _, present := getOpenAIReasoningEffortFromReqBody(reqBody); present {
+		return false
+	}
+	reasoning, ok := reqBody["reasoning"].(map[string]any)
+	if !ok || reasoning == nil {
+		reasoning = map[string]any{}
+		reqBody["reasoning"] = reasoning
+	}
+	reasoning["effort"] = effort
+	if _, ok := reasoning["summary"]; !ok {
+		reasoning["summary"] = "auto"
+	}
+	return true
 }
 
 func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, present bool) {

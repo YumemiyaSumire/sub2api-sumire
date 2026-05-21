@@ -106,6 +106,44 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 	}
 }
 
+func TestParseOpenAIReasoningModelAlias(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		wantBase  string
+		wantLevel string
+	}{
+		{name: "high suffix", model: "gpt-5.5-high", wantBase: "gpt-5.5", wantLevel: "high"},
+		{name: "xhigh suffix", model: "openai/gpt-5.5-xhigh", wantBase: "openai/gpt-5.5", wantLevel: "xhigh"},
+		{name: "unknown suffix", model: "gpt-5.5-hhigh"},
+		{name: "plain model", model: "gpt-5.5"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseOpenAIReasoningModelAlias(tt.model)
+			require.Equal(t, tt.wantBase, got.BaseModel)
+			require.Equal(t, tt.wantLevel, got.Effort)
+		})
+	}
+}
+
+func TestInjectOpenAIReasoningEffort(t *testing.T) {
+	reqBody := map[string]any{"model": "gpt-5.5-high"}
+	require.True(t, injectOpenAIReasoningEffort(reqBody, "high"))
+	require.Equal(t, map[string]any{"effort": "high", "summary": "auto"}, reqBody["reasoning"])
+
+	require.False(t, injectOpenAIReasoningEffort(reqBody, "low"))
+	require.Equal(t, map[string]any{"effort": "high", "summary": "auto"}, reqBody["reasoning"])
+
+	explicitNone := map[string]any{
+		"model":            "gpt-5.5-high",
+		"reasoning_effort": "minimal",
+	}
+	require.False(t, injectOpenAIReasoningEffort(explicitNone, "high"))
+	require.NotContains(t, explicitNone, "reasoning")
+}
+
 func TestGetOpenAIRequestBodyMap_UsesContextCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

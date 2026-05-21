@@ -76,10 +76,18 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	originalModel := chatReq.Model
 	clientStream := chatReq.Stream
+	includeUsage := chatReq.StreamOptions != nil && chatReq.StreamOptions.IncludeUsage
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
+	if chatReq.ReasoningEffort == "" && reasoningEffort != nil {
+		chatReq.ReasoningEffort = *reasoningEffort
+	}
 
 	// 2. Resolve model mapping early so compat prompt_cache_key injection can
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
+		billingModel = alias.BaseModel
+	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
@@ -126,6 +134,16 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		responsesBody, normalizedServiceTier, err := normalizeResponsesBodyServiceTier(responsesBody)
 		if err != nil {
 			return nil, fmt.Errorf("normalize service_tier in responses-shape body: %w", err)
+		}
+		if reasoningEffort != nil && !gjson.GetBytes(responsesBody, "reasoning.effort").Exists() {
+			responsesBody, err = sjson.SetBytes(responsesBody, "reasoning.effort", *reasoningEffort)
+			if err != nil {
+				return nil, fmt.Errorf("inject reasoning effort in responses-shape body: %w", err)
+			}
+			responsesBody, err = sjson.SetBytes(responsesBody, "reasoning.summary", "auto")
+			if err != nil {
+				return nil, fmt.Errorf("inject reasoning summary in responses-shape body: %w", err)
+			}
 		}
 		// Minimal stub populated from the raw body so downstream billing
 		// propagation (ServiceTier, ReasoningEffort) keeps working.
