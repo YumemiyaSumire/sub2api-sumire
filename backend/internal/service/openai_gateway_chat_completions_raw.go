@@ -78,6 +78,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
+		billingModel = alias.BaseModel
+	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
@@ -86,6 +89,13 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	upstreamBody := body
 	if upstreamModel != originalModel {
 		upstreamBody = ReplaceModelInBody(body, upstreamModel)
+	}
+	if reasoningEffort != nil && !openAIRequestBodyHasReasoningEffort(upstreamBody) {
+		var err error
+		upstreamBody, err = sjson.SetBytes(upstreamBody, "reasoning_effort", *reasoningEffort)
+		if err != nil {
+			return nil, fmt.Errorf("inject reasoning_effort: %w", err)
+		}
 	}
 	if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(upstreamBody, upstreamModel); normalized {
 		upstreamBody = normalizedBody

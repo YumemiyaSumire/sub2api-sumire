@@ -40,6 +40,12 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	clientStream := responsesReq.Stream
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
 	serviceTier := extractOpenAIServiceTierFromBody(body)
+	if responsesReq.Reasoning == nil && reasoningEffort != nil {
+		responsesReq.Reasoning = &apicompat.ResponsesReasoning{
+			Effort:  *reasoningEffort,
+			Summary: "auto",
+		}
+	}
 
 	chatReq, err := apicompat.ResponsesToChatCompletionsRequest(&responsesReq)
 	if err != nil {
@@ -48,6 +54,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
+	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
+		billingModel = alias.BaseModel
+	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
