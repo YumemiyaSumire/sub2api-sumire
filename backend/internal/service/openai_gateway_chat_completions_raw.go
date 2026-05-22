@@ -78,8 +78,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
-	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
-		billingModel = alias.BaseModel
+	tuningAlias := resolveOpenAIModelTuningAlias(originalModel)
+	if tuningAlias.Effort != "" && billingModel == originalModel {
+		billingModel = tuningAlias.BaseModel
 	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
@@ -99,6 +100,19 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(upstreamBody, upstreamModel); normalized {
 		upstreamBody = normalizedBody
+	}
+	autoInjectedTuningServiceTier := false
+	if tuningAlias.ServiceTier != "" {
+		var injected bool
+		var err error
+		upstreamBody, injected, err = injectOpenAIServiceTierBytes(upstreamBody, tuningAlias.ServiceTier)
+		if err != nil {
+			return nil, fmt.Errorf("inject service_tier: %w", err)
+		}
+		if injected {
+			autoInjectedTuningServiceTier = true
+			serviceTier = normalizeOpenAIServiceTier(tuningAlias.ServiceTier)
+		}
 	}
 
 	// 4. Apply OpenAI fast policy on the CC body
@@ -164,15 +178,36 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.Platform == PlatformGrok {
 		customUA = "sub2api-grok/1.0"
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var resp *http.Response
+	serviceTierRetryTried := false
+	for {
+		resp, err = s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA)
+		if err != nil {
+			return nil, err
+		}
 
-	// 7. Handle error response with failover
-	if resp.StatusCode >= 400 {
+		// 7. Handle error response with failover
+		if resp.StatusCode < 400 {
+			break
+		}
+
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if autoInjectedTuningServiceTier && !serviceTierRetryTried && isOpenAIUnsupportedServiceTier(resp.StatusCode, upstreamMsg, respBody) {
+			nextBody, derr := sjson.DeleteBytes(upstreamBody, "service_tier")
+			if derr != nil {
+				return nil, fmt.Errorf("strip service_tier for retry: %w", derr)
+			}
+			upstreamBody = nextBody
+			serviceTier = nil
+			serviceTierRetryTried = true
+			logger.L().Info("openai chat_completions raw: retrying without auto service_tier after upstream rejection",
+				zap.Int64("account_id", account.ID),
+				zap.String("original_model", originalModel),
+				zap.String("upstream_model", upstreamModel),
+			)
+			_ = resp.Body.Close()
+			continue
+		}
 		if account.Platform == PlatformGrok {
 			s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -199,6 +234,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if account.Platform == PlatformGrok {
 		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))

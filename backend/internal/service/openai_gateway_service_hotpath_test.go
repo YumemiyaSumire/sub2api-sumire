@@ -809,6 +809,13 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 			wantValue: "medium",
 		},
 		{
+			name:      "fast tuning alias defaults to low",
+			body:      []byte(`{"input":"hi"}`),
+			model:     "gpt-5.4-mini-fast",
+			wantNil:   false,
+			wantValue: "low",
+		},
+		{
 			name:    "未知后缀不返回",
 			body:    []byte(`{"input":"hi"}`),
 			model:   "gpt-5-unknown",
@@ -849,6 +856,73 @@ func TestParseOpenAIReasoningModelAlias(t *testing.T) {
 			require.Equal(t, tt.wantLevel, got.Effort)
 		})
 	}
+}
+
+func TestResolveOpenAIModelTuningAlias(t *testing.T) {
+	tests := []struct {
+		name            string
+		model           string
+		wantBase        string
+		wantEffort      string
+		wantServiceTier string
+	}{
+		{
+			name:            "gpt 5.4 mini fast",
+			model:           "gpt-5.4-mini-fast",
+			wantBase:        "gpt-5.4-mini",
+			wantEffort:      "low",
+			wantServiceTier: "priority",
+		},
+		{
+			name:            "provider prefixed gpt 5.4 mini fast",
+			model:           "openai/gpt-5.4-mini-fast",
+			wantBase:        "openai/gpt-5.4-mini",
+			wantEffort:      "low",
+			wantServiceTier: "priority",
+		},
+		{
+			name:       "existing reasoning alias remains supported",
+			model:      "gpt-5.5-high",
+			wantBase:   "gpt-5.5",
+			wantEffort: "high",
+		},
+		{
+			name:  "fast suffix only applies to gpt 5.4 mini",
+			model: "gpt-5.4-fast",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveOpenAIModelTuningAlias(tt.model)
+			require.Equal(t, tt.wantBase, got.BaseModel)
+			require.Equal(t, tt.wantEffort, got.Effort)
+			require.Equal(t, tt.wantServiceTier, got.ServiceTier)
+		})
+	}
+}
+
+func TestIsOpenAIUnsupportedServiceTier(t *testing.T) {
+	require.True(t, isOpenAIUnsupportedServiceTier(
+		http.StatusBadRequest,
+		"Unsupported parameter: service_tier",
+		[]byte(`{"error":{"message":"Unsupported parameter: service_tier"}}`),
+	))
+	require.True(t, isOpenAIUnsupportedServiceTier(
+		http.StatusBadRequest,
+		"",
+		[]byte(`{"detail":"unknown field service_tier"}`),
+	))
+	require.False(t, isOpenAIUnsupportedServiceTier(
+		http.StatusBadRequest,
+		"Unsupported parameter: prompt_cache_retention",
+		[]byte(`{"error":{"message":"Unsupported parameter: prompt_cache_retention"}}`),
+	))
+	require.False(t, isOpenAIUnsupportedServiceTier(
+		http.StatusInternalServerError,
+		"Unsupported parameter: service_tier",
+		[]byte(`{"error":{"message":"Unsupported parameter: service_tier"}}`),
+	))
 }
 
 func TestInjectOpenAIReasoningEffort(t *testing.T) {

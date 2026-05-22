@@ -122,6 +122,45 @@ func TestForwardAsRawChatCompletions_ForcesStreamUsageUpstreamAndPassesUsageDown
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }
 
+func TestForwardAsRawChatCompletions_FastAliasRetriesWithoutUnsupportedServiceTier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4-mini-fast","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_bad_service_tier"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"Unsupported parameter: service_tier"}}`)),
+		},
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_fast_retry_ok"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_fast","object":"chat.completion","model":"gpt-5.4-mini","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)),
+		},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 2)
+	require.Equal(t, "gpt-5.4-mini", gjson.GetBytes(upstream.bodies[0], "model").String())
+	require.Equal(t, "low", gjson.GetBytes(upstream.bodies[0], "reasoning_effort").String())
+	require.Equal(t, "priority", gjson.GetBytes(upstream.bodies[0], "service_tier").String())
+	require.Equal(t, "gpt-5.4-mini", gjson.GetBytes(upstream.bodies[1], "model").String())
+	require.Equal(t, "low", gjson.GetBytes(upstream.bodies[1], "reasoning_effort").String())
+	require.False(t, gjson.GetBytes(upstream.bodies[1], "service_tier").Exists())
+	require.Contains(t, rec.Body.String(), `"content":"ok"`)
+}
+
 func TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContentNonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
