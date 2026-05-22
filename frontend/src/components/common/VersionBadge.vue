@@ -12,7 +12,9 @@
         ]"
         :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
       >
-        <span v-if="currentVersionLabel" class="font-medium">{{ currentVersionLabel }}</span>
+        <span v-if="currentVersionLabel" class="whitespace-nowrap font-medium">{{
+          currentVersionLabel
+        }}</span>
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
@@ -31,7 +33,7 @@
         <div
           v-if="dropdownOpen"
           ref="dropdownRef"
-          class="absolute left-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
+          class="absolute left-0 z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
         >
           <!-- Header with refresh button -->
           <div
@@ -78,33 +80,43 @@
             <!-- Content -->
             <template v-else>
               <!-- Version display - centered and prominent -->
-              <div class="mb-4 text-center">
-                <div class="inline-flex items-center gap-2">
-                  <span
-                    v-if="currentVersionLabel"
-                    class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >{{ currentVersionLabel }}</span
-                  >
-                  <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
-                  <!-- Show check mark when up to date -->
-                  <span
-                    v-if="!hasUpdate"
-                    class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
-                  >
-                    <svg
-                      class="h-3 w-3 text-green-600 dark:text-green-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
+              <div class="mb-5 text-center">
+                <div class="flex flex-col items-center gap-2">
+                  <div class="flex min-h-8 items-center justify-center gap-2">
+                    <span
+                      v-if="currentVersionNumber"
+                      class="whitespace-nowrap text-2xl font-bold text-gray-900 dark:text-white"
+                      >{{ currentVersionNumber }}</span
                     >
-                      <path
-                        fill-rule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
+                    <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500"
+                      >--</span
+                    >
+                    <!-- Show check mark when up to date -->
+                    <span
+                      v-if="!hasUpdate"
+                      class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
+                    >
+                      <svg
+                        class="h-3 w-3 text-green-600 dark:text-green-400"
+                        fill="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </span>
+                  </div>
+                  <span
+                    v-if="currentVersionNumber"
+                    class="rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-semibold text-primary-600 dark:bg-primary-900/30 dark:text-primary-300"
+                  >
+                    Sumire
                   </span>
                 </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                <p class="mt-3 text-xs text-gray-500 dark:text-dark-400">
                   {{
                     hasUpdate
                       ? t('version.latestVersion') + ': v' + latestVersion
@@ -386,7 +398,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import { performUpdate, restartService } from '@/api/admin/system'
 import Icon from '@/components/icons/Icon.vue'
-import { formatSumireVersionLabel } from '@/utils/versionLabel'
+import { formatSumireVersionLabel, formatSumireVersionNumber } from '@/utils/versionLabel'
 
 const { t } = useI18n()
 
@@ -406,6 +418,7 @@ const dropdownRef = ref<HTMLElement | null>(null)
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
 const currentVersionLabel = computed(() => formatSumireVersionLabel(currentVersion.value))
+const currentVersionNumber = computed(() => formatSumireVersionNumber(currentVersion.value))
 const versionLabel = computed(() => formatSumireVersionLabel(props.version))
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
