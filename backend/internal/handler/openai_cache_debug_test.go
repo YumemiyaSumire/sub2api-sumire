@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -90,6 +91,26 @@ func TestLogOpenAICacheDebugIngress(t *testing.T) {
 	if fields["body_bytes"] == int64(0) {
 		t.Fatalf("body_bytes should be non-zero")
 	}
+	if fields["full_body_hash"] == "" {
+		t.Fatalf("full_body_hash should be non-empty")
+	}
+	if fields["input_hash"] == "" {
+		t.Fatalf("input_hash should be non-empty")
+	}
+	if fields["input_prefix_hash"] == "" {
+		t.Fatalf("input_prefix_hash should be non-empty")
+	}
+	if fields["input_item_source"] != "input" {
+		t.Fatalf("input_item_source = %v, want input", fields["input_item_source"])
+	}
+	assertStringSliceField(t, fields["input_item_type_list"], []string{"user", "assistant"})
+	assertIntSliceField(t, fields["input_item_length_list"], []int{15, 20})
+	if fields["reasoning_effort"] != "" {
+		t.Fatalf("reasoning_effort = %v, want empty", fields["reasoning_effort"])
+	}
+	if fields["tools_count"] != int64(0) {
+		t.Fatalf("tools_count = %v, want 0", fields["tools_count"])
+	}
 }
 
 func TestLogOpenAICacheDebugResult(t *testing.T) {
@@ -137,5 +158,67 @@ func TestLogOpenAICacheDebugResult(t *testing.T) {
 	}
 	if fields["cache_creation_input_tokens"] != int64(45) {
 		t.Fatalf("cache_creation_input_tokens = %v, want 45", fields["cache_creation_input_tokens"])
+	}
+}
+
+func TestLogOpenAICacheDebugIngressFallsBackToMessages(t *testing.T) {
+	t.Setenv(debugCacheKeysEnv, "1")
+
+	core, observed := observer.New(zap.InfoLevel)
+	reqLog := zap.New(core)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	body := []byte(`{"reasoning":{"effort":"high"},"tools":[{"type":"function"}],"messages":[{"role":"system"},{"role":"user","content":"hello"}]}`)
+
+	logOpenAICacheDebugIngress(reqLog, c, "chat_completions", body)
+
+	entries := observed.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+
+	fields := entries[0].ContextMap()
+	if fields["input_count"] != int64(0) {
+		t.Fatalf("input_count = %v, want 0", fields["input_count"])
+	}
+	if fields["messages_count"] != int64(2) {
+		t.Fatalf("messages_count = %v, want 2", fields["messages_count"])
+	}
+	if fields["input_item_source"] != "messages" {
+		t.Fatalf("input_item_source = %v, want messages", fields["input_item_source"])
+	}
+	assertStringSliceField(t, fields["input_item_type_list"], []string{"system", "user"})
+	assertIntSliceField(t, fields["input_item_length_list"], []int{17, 33})
+	if fields["input_hash"] == "" {
+		t.Fatalf("input_hash should be non-empty")
+	}
+	if fields["input_prefix_hash"] == "" {
+		t.Fatalf("input_prefix_hash should be non-empty")
+	}
+	if fields["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %v, want high", fields["reasoning_effort"])
+	}
+	if fields["tools_count"] != int64(1) {
+		t.Fatalf("tools_count = %v, want 1", fields["tools_count"])
+	}
+}
+
+func assertStringSliceField(t *testing.T, got any, want []string) {
+	t.Helper()
+
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("field = %v, want %v", got, want)
+	}
+}
+
+func assertIntSliceField(t *testing.T, got any, want []int) {
+	t.Helper()
+
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("field = %v, want %v", got, want)
 	}
 }
