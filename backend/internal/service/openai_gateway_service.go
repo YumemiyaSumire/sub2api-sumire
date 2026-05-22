@@ -2782,6 +2782,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		UserID:         userID,
 		APIKeyID:       apiKeyID,
 		ImageIntent:    imageIntent,
+		CacheTraceID:   openAICacheTraceIDFromGin(c),
 	}
 	if restoreOpenAIClientPromptCacheRetention(reqBody, clientPromptCacheRetention, promptCacheOptions) {
 		bodyModified = true
@@ -3340,6 +3341,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			UserID:         userID,
 			APIKeyID:       apiKeyID,
 			ImageIntent:    imageIntent,
+			CacheTraceID:   openAICacheTraceIDFromGin(c),
 		}
 		clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
 		promptCacheBodyModified := restoreOpenAIClientPromptCacheRetention(reqBody, clientPromptCacheRetention, promptCacheOptions)

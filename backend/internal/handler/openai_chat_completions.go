@@ -165,6 +165,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		account := selection.Account
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
+		logOpenAICacheDebugSticky(reqLog, c, "chat_completions", sessionHash, scheduleDecision, account.ID, account.Name, switchCount)
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
@@ -274,7 +275,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := resolveRawCCUpstreamEndpoint(c, account)
-		logOpenAICacheDebugResult(reqLog, "chat_completions", result, account.ID)
+		logOpenAICacheDebugResult(reqLog, c, "chat_completions", result, account.ID)
 
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{

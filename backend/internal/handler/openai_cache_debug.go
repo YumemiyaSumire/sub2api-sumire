@@ -30,8 +30,11 @@ func logOpenAICacheDebugIngress(reqLog *zap.Logger, c *gin.Context, endpoint str
 
 	itemSource, items := openAICacheDebugItems(body)
 	itemTypes, itemLengths := summarizeOpenAICacheDebugItems(items)
+	cacheTraceID := ensureOpenAICacheDebugTraceID(c, endpoint, body)
+	promptCacheKey := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 
 	reqLog.Info("openai.cache_debug_ingress",
+		zap.String("cache_trace_id", cacheTraceID),
 		zap.String("endpoint", endpoint),
 		zap.Int("body_bytes", len(body)),
 		zap.String("full_body_hash", openAICacheDebugHashBytes(body)),
@@ -42,7 +45,8 @@ func logOpenAICacheDebugIngress(reqLog *zap.Logger, c *gin.Context, endpoint str
 		zap.Ints("input_item_length_list", itemLengths),
 		zap.String("session_id", strings.TrimSpace(c.GetHeader("session_id"))),
 		zap.String("conversation_id", strings.TrimSpace(c.GetHeader("conversation_id"))),
-		zap.String("prompt_cache_key", strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())),
+		zap.String("prompt_cache_key", promptCacheKey),
+		zap.String("prompt_cache_key_sha256", openAICacheDebugHashStringShort(promptCacheKey)),
 		zap.String("metadata_user_id", strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())),
 		zap.Int("messages_count", len(gjson.GetBytes(body, "messages").Array())),
 		zap.Int("input_count", len(gjson.GetBytes(body, "input").Array())),
@@ -51,12 +55,13 @@ func logOpenAICacheDebugIngress(reqLog *zap.Logger, c *gin.Context, endpoint str
 	)
 }
 
-func logOpenAICacheDebugResult(reqLog *zap.Logger, endpoint string, result *service.OpenAIForwardResult, accountID int64) {
+func logOpenAICacheDebugResult(reqLog *zap.Logger, c *gin.Context, endpoint string, result *service.OpenAIForwardResult, accountID int64) {
 	if reqLog == nil || result == nil || !openAICacheDebugEnabled() {
 		return
 	}
 
 	reqLog.Info("openai.cache_debug_result",
+		zap.String("cache_trace_id", openAICacheDebugTraceID(c)),
 		zap.String("endpoint", endpoint),
 		zap.String("usage_request_id", strings.TrimSpace(result.RequestID)),
 		zap.Int64("account_id", accountID),
@@ -66,6 +71,58 @@ func logOpenAICacheDebugResult(reqLog *zap.Logger, endpoint string, result *serv
 	)
 }
 
+func logOpenAICacheDebugSticky(reqLog *zap.Logger, c *gin.Context, endpoint string, sessionHash string, scheduleDecision service.OpenAIAccountScheduleDecision, accountID int64, accountName string, switchCount int) {
+	if reqLog == nil || !openAICacheDebugEnabled() {
+		return
+	}
+
+	reqLog.Info("openai.cache_debug_sticky",
+		zap.String("cache_trace_id", openAICacheDebugTraceID(c)),
+		zap.String("endpoint", endpoint),
+		zap.String("session_hash", strings.TrimSpace(sessionHash)),
+		zap.String("schedule_layer", strings.TrimSpace(scheduleDecision.Layer)),
+		zap.Bool("sticky_previous_hit", scheduleDecision.StickyPreviousHit),
+		zap.Bool("sticky_session_hit", scheduleDecision.StickySessionHit),
+		zap.Int("candidate_count", scheduleDecision.CandidateCount),
+		zap.Int("top_k", scheduleDecision.TopK),
+		zap.Int64("selected_account_id", accountID),
+		zap.String("selected_account_name", strings.TrimSpace(accountName)),
+		zap.String("selected_account_type", strings.TrimSpace(scheduleDecision.SelectedAccountType)),
+		zap.Int("switch_count", switchCount),
+	)
+}
+
+func ensureOpenAICacheDebugTraceID(c *gin.Context, endpoint string, body []byte) string {
+	if existing := openAICacheDebugTraceID(c); existing != "" {
+		return existing
+	}
+
+	seed := strings.Join([]string{
+		strings.TrimSpace(endpoint),
+		strings.TrimSpace(openAICacheDebugHashBytes(body)),
+		strings.TrimSpace(c.GetHeader("session_id")),
+		strings.TrimSpace(c.GetHeader("conversation_id")),
+		strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()),
+	}, "|")
+	traceID := openAICacheDebugHashStringShort(seed)
+	if traceID != "" && c != nil {
+		c.Set(service.OpenAICacheTraceIDContextKey, traceID)
+	}
+	return traceID
+}
+
+func openAICacheDebugTraceID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	value, ok := c.Get(service.OpenAICacheTraceIDContextKey)
+	if !ok {
+		return ""
+	}
+	traceID, _ := value.(string)
+	return strings.TrimSpace(traceID)
+}
+
 func openAICacheDebugHashBytes(value []byte) string {
 	if len(value) == 0 {
 		return ""
@@ -73,6 +130,16 @@ func openAICacheDebugHashBytes(value []byte) string {
 
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])
+}
+
+func openAICacheDebugHashStringShort(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:8])
 }
 
 func openAICacheDebugHashRawItems(items []gjson.Result) string {

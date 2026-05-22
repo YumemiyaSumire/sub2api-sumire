@@ -67,6 +67,9 @@ func TestLogOpenAICacheDebugIngress(t *testing.T) {
 	}
 
 	fields := entry.ContextMap()
+	if fields["cache_trace_id"] == "" {
+		t.Fatalf("cache_trace_id should be non-empty")
+	}
 	if fields["endpoint"] != "responses" {
 		t.Fatalf("endpoint = %v, want responses", fields["endpoint"])
 	}
@@ -78,6 +81,9 @@ func TestLogOpenAICacheDebugIngress(t *testing.T) {
 	}
 	if fields["prompt_cache_key"] != "key-1" {
 		t.Fatalf("prompt_cache_key = %v, want key-1", fields["prompt_cache_key"])
+	}
+	if fields["prompt_cache_key_sha256"] == "" {
+		t.Fatalf("prompt_cache_key_sha256 should be non-empty")
 	}
 	if fields["metadata_user_id"] != "user-1" {
 		t.Fatalf("metadata_user_id = %v, want user-1", fields["metadata_user_id"])
@@ -127,8 +133,10 @@ func TestLogOpenAICacheDebugResult(t *testing.T) {
 			CacheCreationInputTokens: 45,
 		},
 	}
+	c := &gin.Context{}
+	c.Set(service.OpenAICacheTraceIDContextKey, "trace-1")
 
-	logOpenAICacheDebugResult(reqLog, "chat_completions", result, 47)
+	logOpenAICacheDebugResult(reqLog, c, "chat_completions", result, 47)
 
 	entries := observed.All()
 	if len(entries) != 1 {
@@ -141,6 +149,9 @@ func TestLogOpenAICacheDebugResult(t *testing.T) {
 	}
 
 	fields := entry.ContextMap()
+	if fields["cache_trace_id"] != "trace-1" {
+		t.Fatalf("cache_trace_id = %v, want trace-1", fields["cache_trace_id"])
+	}
 	if fields["endpoint"] != "chat_completions" {
 		t.Fatalf("endpoint = %v, want chat_completions", fields["endpoint"])
 	}
@@ -158,6 +169,53 @@ func TestLogOpenAICacheDebugResult(t *testing.T) {
 	}
 	if fields["cache_creation_input_tokens"] != int64(45) {
 		t.Fatalf("cache_creation_input_tokens = %v, want 45", fields["cache_creation_input_tokens"])
+	}
+}
+
+func TestLogOpenAICacheDebugSticky(t *testing.T) {
+	t.Setenv(debugCacheKeysEnv, "1")
+
+	core, observed := observer.New(zap.InfoLevel)
+	reqLog := zap.New(core)
+	c := &gin.Context{}
+	c.Set(service.OpenAICacheTraceIDContextKey, "trace-sticky")
+
+	logOpenAICacheDebugSticky(reqLog, c, "responses", "session-hash-1", service.OpenAIAccountScheduleDecision{
+		Layer:               "session_hash",
+		StickySessionHit:    true,
+		CandidateCount:      3,
+		TopK:                2,
+		SelectedAccountType: service.AccountTypeOAuth,
+	}, 47, " account-name ", 1)
+
+	entries := observed.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+
+	entry := entries[0]
+	if entry.Message != "openai.cache_debug_sticky" {
+		t.Fatalf("unexpected message: %s", entry.Message)
+	}
+
+	fields := entry.ContextMap()
+	if fields["cache_trace_id"] != "trace-sticky" {
+		t.Fatalf("cache_trace_id = %v, want trace-sticky", fields["cache_trace_id"])
+	}
+	if fields["session_hash"] != "session-hash-1" {
+		t.Fatalf("session_hash = %v, want session-hash-1", fields["session_hash"])
+	}
+	if fields["sticky_session_hit"] != true {
+		t.Fatalf("sticky_session_hit = %v, want true", fields["sticky_session_hit"])
+	}
+	if fields["selected_account_id"] != int64(47) {
+		t.Fatalf("selected_account_id = %v, want 47", fields["selected_account_id"])
+	}
+	if fields["selected_account_name"] != "account-name" {
+		t.Fatalf("selected_account_name = %v, want account-name", fields["selected_account_name"])
+	}
+	if fields["switch_count"] != int64(1) {
+		t.Fatalf("switch_count = %v, want 1", fields["switch_count"])
 	}
 }
 
