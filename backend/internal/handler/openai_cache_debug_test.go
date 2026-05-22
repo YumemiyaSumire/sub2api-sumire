@@ -98,7 +98,7 @@ func TestLogOpenAICacheDebugResult(t *testing.T) {
 	core, observed := observer.New(zap.InfoLevel)
 	reqLog := zap.New(core)
 
-	result := &service.ForwardResult{
+	result := &service.OpenAIForwardResult{
 		RequestID:     " generated:req-1 ",
 		UpstreamModel: " gpt-5.5 ",
 		Usage: service.ClaudeUsage{

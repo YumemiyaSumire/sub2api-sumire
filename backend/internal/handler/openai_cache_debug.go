@@ -38,7 +38,7 @@ func logOpenAICacheDebugIngress(reqLog *zap.Logger, c *gin.Context, endpoint str
 	)
 }
 
-func logOpenAICacheDebugResult(reqLog *zap.Logger, endpoint string, result *service.ForwardResult, accountID int64) {
+func logOpenAICacheDebugResult(reqLog *zap.Logger, endpoint string, result *service.OpenAIForwardResult, accountID int64) {
 	if reqLog == nil || result == nil || !openAICacheDebugEnabled() {
 		return
 	}
