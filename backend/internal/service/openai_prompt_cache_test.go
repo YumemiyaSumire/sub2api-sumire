@@ -161,3 +161,29 @@ func TestOpenAIAutoPromptCacheResponsesRequest(t *testing.T) {
 	require.True(t, result.PromptCacheKeyAutoInjected)
 	require.True(t, result.PromptCacheRetentionAutoInjected)
 }
+
+func TestOpenAIPromptCacheForwardDebugIncludesTraceAndHashesKey(t *testing.T) {
+	t.Setenv("SUB2API_DEBUG_CACHE_KEYS", "1")
+
+	sink, cleanup := captureStructuredLog(t)
+	defer cleanup()
+
+	logOpenAIPromptCacheForwardDebug(openAIPromptCacheApplyResult{
+		PromptCacheKey:                   "cache-key-1",
+		PromptCacheRetention:             "24h",
+		PromptCacheKeyAutoInjected:       true,
+		PromptCacheRetentionAutoInjected: true,
+	}, openAIPromptCacheOptions{
+		Endpoint:       "responses",
+		RequestedModel: "gpt-5.5-high",
+		UpstreamModel:  "gpt-5.5",
+		UserID:         1,
+		APIKeyID:       6,
+		CacheTraceID:   "trace-forward",
+	})
+
+	require.True(t, sink.ContainsMessage("openai.cache_debug_forward"))
+	require.True(t, sink.ContainsFieldValue("cache_trace_id", "trace-forward"))
+	require.True(t, sink.ContainsFieldValue("prompt_cache_key", "cache-key-1"))
+	require.True(t, sink.ContainsField("prompt_cache_key_sha256"))
+}

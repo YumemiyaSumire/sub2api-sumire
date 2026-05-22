@@ -157,6 +157,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			UserID:         userID,
 			APIKeyID:       apiKeyID,
 			ImageIntent:    imageIntent,
+			CacheTraceID:   openAICacheTraceIDFromGin(c),
 		}
 		clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
 		promptCacheBodyModified := restoreOpenAIClientPromptCacheRetention(reqBody, clientPromptCacheRetention, promptCacheOptions)

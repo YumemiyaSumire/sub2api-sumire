@@ -7,12 +7,14 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
 const (
 	openAIAutoPromptCacheEnv      = "SUB2API_OPENAI_AUTO_PROMPT_CACHE"
 	openAIPromptCacheRetentionEnv = "SUB2API_OPENAI_PROMPT_CACHE_RETENTION"
+	OpenAICacheTraceIDContextKey  = "openai_cache_debug_trace_id"
 
 	openAIPromptCacheRetentionDisabled = ""
 	openAIPromptCacheRetentionDefault  = "24h"
@@ -26,6 +28,7 @@ type openAIPromptCacheOptions struct {
 	UserID         int64
 	APIKeyID       int64
 	ImageIntent    bool
+	CacheTraceID   string
 }
 
 type openAIPromptCacheApplyResult struct {
@@ -59,6 +62,18 @@ func openAIPromptCacheRetentionValue() (string, bool) {
 	default:
 		return openAIPromptCacheRetentionDisabled, false
 	}
+}
+
+func openAICacheTraceIDFromGin(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	value, ok := c.Get(OpenAICacheTraceIDContextKey)
+	if !ok {
+		return ""
+	}
+	traceID, _ := value.(string)
+	return strings.TrimSpace(traceID)
 }
 
 func applyOpenAIAutoPromptCacheToMap(reqBody map[string]any, opts openAIPromptCacheOptions) openAIPromptCacheApplyResult {
@@ -181,8 +196,10 @@ func logOpenAIPromptCacheForwardDebug(result openAIPromptCacheApplyResult, opts 
 	}
 
 	logger.L().Info("openai.cache_debug_forward",
+		zap.String("cache_trace_id", strings.TrimSpace(opts.CacheTraceID)),
 		zap.String("endpoint", strings.TrimSpace(opts.Endpoint)),
 		zap.String("prompt_cache_key", result.PromptCacheKey),
+		zap.String("prompt_cache_key_sha256", hashSensitiveValueForLog(result.PromptCacheKey)),
 		zap.String("prompt_cache_retention", result.PromptCacheRetention),
 		zap.Bool("prompt_cache_key_auto_injected", result.PromptCacheKeyAutoInjected),
 		zap.Bool("prompt_cache_retention_auto_injected", result.PromptCacheRetentionAutoInjected),

@@ -1787,6 +1787,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			UserID:         userID,
 			APIKeyID:       apiKeyID,
 			ImageIntent:    imageIntent,
+			CacheTraceID:   openAICacheTraceIDFromGin(c),
 		}
 		if restoreOpenAIClientPromptCacheRetention(decoded, clientPromptCacheRetention, promptCacheOptions) {
 			markDecodedModified()

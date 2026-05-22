@@ -256,6 +256,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		UserID:         userID,
 		APIKeyID:       apiKeyID,
 		ImageIntent:    imageIntent,
+		CacheTraceID:   openAICacheTraceIDFromGin(c),
 	}
 	if restoreOpenAIClientPromptCacheRetention(promptCacheReqBody, clientPromptCacheRetention, promptCacheOptions) {
 		promptCacheBodyModified = true
