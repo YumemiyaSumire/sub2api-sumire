@@ -854,6 +854,20 @@
         </div>
 
         <!-- 支持的模型系列（仅 antigravity 平台） -->
+        <div class="border-t pt-4">
+          <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.customModels.title") }}
+          </label>
+          <textarea
+            v-model="createCustomModelsText"
+            class="input min-h-[90px] w-full"
+            :placeholder="t('admin.groups.customModels.placeholder')"
+          ></textarea>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.customModels.hint") }}
+          </p>
+        </div>
+
         <div v-if="createForm.platform === 'antigravity'" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -2142,6 +2156,20 @@
         </div>
 
         <!-- 支持的模型系列（仅 antigravity 平台） -->
+        <div class="border-t pt-4">
+          <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.customModels.title") }}
+          </label>
+          <textarea
+            v-model="editCustomModelsText"
+            class="input min-h-[90px] w-full"
+            :placeholder="t('admin.groups.customModels.placeholder')"
+          ></textarea>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.customModels.hint") }}
+          </p>
+        </div>
+
         <div v-if="editForm.platform === 'antigravity'" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -3322,6 +3350,8 @@ const createModelsListSelectedCount = computed(
 const editModelsListSelectedCount = computed(
   () => editModelsListState.items.filter((item) => item.selected).length,
 );
+const createCustomModelsText = ref("");
+const editCustomModelsText = ref("");
 
 const createForm = reactive({
   name: "",
@@ -3515,6 +3545,21 @@ const toggleEditScope = (scope: string) => {
     editForm.supported_model_scopes.splice(idx, 1);
   }
 };
+
+const parseCustomModelsText = (value: string): string[] => {
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const raw of value.split(/[\n,，]+/)) {
+    const model = raw.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+  return models;
+};
+
+const formatCustomModelsText = (models?: string[]): string =>
+  (models || []).join("\n");
 
 // 处理账号搜索输入框聚焦
 const onAccountSearchFocus = (
@@ -3933,6 +3978,7 @@ const closeCreateModal = () => {
   createForm.copy_accounts_from_group_ids = [];
   createForm.rpm_limit = 0;
   resetModelsListState(createModelsListState);
+  createCustomModelsText.value = "";
   createModelRoutingRules.value = [];
 };
 
@@ -3992,6 +4038,7 @@ const handleCreateGroup = async () => {
         createForm.platform,
         createForm.supported_model_scopes,
       ),
+      custom_models: parseCustomModelsText(createCustomModelsText.value),
       messages_dispatch_model_config:
         createForm.platform === "openai"
           ? messagesDispatchFormStateToConfig({
@@ -4071,6 +4118,7 @@ const handleEdit = async (group: AdminGroup) => {
     "gemini_text",
     "gemini_image",
   ];
+  editCustomModelsText.value = formatCustomModelsText(group.custom_models);
   editForm.mcp_xml_inject = group.mcp_xml_inject ?? true;
   editForm.copy_accounts_from_group_ids = []; // 复制账号字段每次编辑时重置为空
   editForm.rpm_limit = group.rpm_limit ?? 0;
@@ -4092,6 +4140,7 @@ const closeEditModal = () => {
   editingGroup.value = null;
   editModelRoutingRules.value = [];
   editForm.copy_accounts_from_group_ids = [];
+  editCustomModelsText.value = "";
   resetMessagesDispatchFormState(editForm);
   resetModelsListState(editModelsListState);
 };
@@ -4131,6 +4180,7 @@ const handleUpdateGroup = async () => {
         editForm.platform,
         editForm.supported_model_scopes,
       ),
+      custom_models: parseCustomModelsText(editCustomModelsText.value),
       messages_dispatch_model_config:
         editForm.platform === "openai"
           ? messagesDispatchFormStateToConfig({

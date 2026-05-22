@@ -383,6 +383,12 @@ func (_c *GroupCreate) SetSupportedModelScopes(v []string) *GroupCreate {
 	return _c
 }
 
+// SetCustomModels sets the "custom_models" field.
+func (_c *GroupCreate) SetCustomModels(v []string) *GroupCreate {
+	_c.mutation.SetCustomModels(v)
+	return _c
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (_c *GroupCreate) SetSortOrder(v int) *GroupCreate {
 	_c.mutation.SetSortOrder(v)
@@ -688,6 +694,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultSupportedModelScopes
 		_c.mutation.SetSupportedModelScopes(v)
 	}
+	if _, ok := _c.mutation.CustomModels(); !ok {
+		v := group.DefaultCustomModels
+		_c.mutation.SetCustomModels(v)
+	}
 	if _, ok := _c.mutation.SortOrder(); !ok {
 		v := group.DefaultSortOrder
 		_c.mutation.SetSortOrder(v)
@@ -792,6 +802,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.SupportedModelScopes(); !ok {
 		return &ValidationError{Name: "supported_model_scopes", err: errors.New(`ent: missing required field "Group.supported_model_scopes"`)}
+	}
+	if _, ok := _c.mutation.CustomModels(); !ok {
+		return &ValidationError{Name: "custom_models", err: errors.New(`ent: missing required field "Group.custom_models"`)}
 	}
 	if _, ok := _c.mutation.SortOrder(); !ok {
 		return &ValidationError{Name: "sort_order", err: errors.New(`ent: missing required field "Group.sort_order"`)}
@@ -956,6 +969,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SupportedModelScopes(); ok {
 		_spec.SetField(group.FieldSupportedModelScopes, field.TypeJSON, value)
 		_node.SupportedModelScopes = value
+	}
+	if value, ok := _c.mutation.CustomModels(); ok {
+		_spec.SetField(group.FieldCustomModels, field.TypeJSON, value)
+		_node.CustomModels = value
 	}
 	if value, ok := _c.mutation.SortOrder(); ok {
 		_spec.SetField(group.FieldSortOrder, field.TypeInt, value)
@@ -1586,6 +1603,18 @@ func (u *GroupUpsert) SetSupportedModelScopes(v []string) *GroupUpsert {
 // UpdateSupportedModelScopes sets the "supported_model_scopes" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateSupportedModelScopes() *GroupUpsert {
 	u.SetExcluded(group.FieldSupportedModelScopes)
+	return u
+}
+
+// SetCustomModels sets the "custom_models" field.
+func (u *GroupUpsert) SetCustomModels(v []string) *GroupUpsert {
+	u.Set(group.FieldCustomModels, v)
+	return u
+}
+
+// UpdateCustomModels sets the "custom_models" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCustomModels() *GroupUpsert {
+	u.SetExcluded(group.FieldCustomModels)
 	return u
 }
 
@@ -2257,6 +2286,20 @@ func (u *GroupUpsertOne) SetSupportedModelScopes(v []string) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateSupportedModelScopes() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateSupportedModelScopes()
+	})
+}
+
+// SetCustomModels sets the "custom_models" field.
+func (u *GroupUpsertOne) SetCustomModels(v []string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCustomModels(v)
+	})
+}
+
+// UpdateCustomModels sets the "custom_models" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCustomModels() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCustomModels()
 	})
 }
 
@@ -3112,6 +3155,20 @@ func (u *GroupUpsertBulk) SetSupportedModelScopes(v []string) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateSupportedModelScopes() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateSupportedModelScopes()
+	})
+}
+
+// SetCustomModels sets the "custom_models" field.
+func (u *GroupUpsertBulk) SetCustomModels(v []string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCustomModels(v)
+	})
+}
+
+// UpdateCustomModels sets the "custom_models" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCustomModels() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCustomModels()
 	})
 }
 

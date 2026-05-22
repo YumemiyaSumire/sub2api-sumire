@@ -132,6 +132,12 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
 			Comment("支持的模型系列：claude, gemini_text, gemini_image"),
 
+		// 自定义模型组列表 (added by migration 142)
+		field.JSON("custom_models", []string{}).
+			Default([]string{}).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("自定义模型列表，用于账号模型限制批量导入"),
+
 		// 分组排序 (added by migration 052)
 		field.Int("sort_order").
 			Default(0).

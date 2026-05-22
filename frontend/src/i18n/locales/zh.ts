@@ -2313,6 +2313,11 @@ export default {
         hint: '可选多个分组，账号会自动去重',
         hintEdit: '⚠️ 注意：这会替换当前分组的所有账号绑定'
       },
+      customModels: {
+        title: '自定义模型列表',
+        placeholder: 'gpt-5.4\ngpt-5.4-mini\ngpt-5.5-high',
+        hint: '每行一个模型，也可以用逗号分隔。仅用于导入到账号模型白名单。'
+      },
       modelRouting: {
         title: '模型路由配置',
         tooltip:
@@ -3585,6 +3590,9 @@ export default {
       syncUpstreamModelsError: '同步上游模型失败：{message}',
       clearAllModels: '清除所有模型',
       customModelName: '自定义模型名称',
+      addFromModelGroup: '从模型组添加',
+      modelGroupAdded: '已从 {name} 添加 {count} 个模型',
+      modelGroupNoChanges: '{name} 中的模型均已选择',
       enterCustomModelName: '输入自定义模型名称',
       addModel: '填入',
       modelExists: '该模型已存在',
