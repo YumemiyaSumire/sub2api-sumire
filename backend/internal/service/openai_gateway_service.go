@@ -2476,11 +2476,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	// 对所有请求执行模型映射（包含 Codex CLI）。
 	billingModel := account.GetMappedModel(reqModel)
-	if alias := parseOpenAIReasoningModelAlias(reqModel); alias.Effort != "" {
+	tuningAlias := resolveOpenAIModelTuningAlias(reqModel)
+	autoInjectedTuningServiceTier := false
+	if tuningAlias.Effort != "" {
 		if billingModel == reqModel {
-			billingModel = alias.BaseModel
+			billingModel = tuningAlias.BaseModel
 		}
-		if injectOpenAIReasoningEffort(reqBody, alias.Effort) {
+		if injectOpenAIReasoningEffort(reqBody, tuningAlias.Effort) {
+			bodyModified = true
+			disablePatch()
+		}
+	}
+	if tuningAlias.ServiceTier != "" {
+		if injectOpenAIServiceTier(reqBody, tuningAlias.ServiceTier) {
+			autoInjectedTuningServiceTier = true
 			bodyModified = true
 			disablePatch()
 		}
@@ -3034,6 +3043,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
+	httpTuningServiceTierRetryTried := false
 	for {
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -3094,6 +3104,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					continue
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
+			}
+			if autoInjectedTuningServiceTier && !httpTuningServiceTierRetryTried && isOpenAIUnsupportedServiceTier(resp.StatusCode, upstreamMsg, respBody) {
+				delete(reqBody, "service_tier")
+				body, err = json.Marshal(reqBody)
+				if err != nil {
+					return nil, fmt.Errorf("serialize service_tier fallback retry body: %w", err)
+				}
+				httpTuningServiceTierRetryTried = true
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying request once without auto service_tier after upstream rejection (account: %s)", account.Name)
+				continue
 			}
 			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
@@ -6353,6 +6373,9 @@ func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, 
 func deriveOpenAIReasoningEffortFromModel(model string) string {
 	if strings.TrimSpace(model) == "" {
 		return ""
+	}
+	if alias := resolveOpenAIModelTuningAlias(model); alias.Effort != "" {
+		return alias.Effort
 	}
 
 	modelID := strings.TrimSpace(model)

@@ -86,8 +86,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// 2. Resolve model mapping early so compat prompt_cache_key injection can
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
-	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
-		billingModel = alias.BaseModel
+	tuningAlias := resolveOpenAIModelTuningAlias(originalModel)
+	if tuningAlias.Effort != "" && billingModel == originalModel {
+		billingModel = tuningAlias.BaseModel
 	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 
@@ -241,6 +242,21 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	logOpenAIPromptCacheForwardDebug(promptCacheApplyResult, promptCacheOptions)
 
+	autoInjectedTuningServiceTier := false
+	if tuningAlias.ServiceTier != "" {
+		var injected bool
+		responsesBody, injected, err = injectOpenAIServiceTierBytes(responsesBody, tuningAlias.ServiceTier)
+		if err != nil {
+			return nil, fmt.Errorf("inject service_tier for tuning alias: %w", err)
+		}
+		if injected {
+			autoInjectedTuningServiceTier = true
+			if responsesReq.ServiceTier == "" {
+				responsesReq.ServiceTier = tuningAlias.ServiceTier
+			}
+		}
+	}
+
 	// 4b. Apply OpenAI fast policy (may filter service_tier or block the request).
 	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, responsesBody)
 	if policyErr != nil {
@@ -259,48 +275,68 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build upstream request
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
-	releaseUpstreamCtx()
-	if err != nil {
-		return nil, fmt.Errorf("build upstream request: %w", err)
-	}
-
-	if promptCacheKey != "" {
-		upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
-	}
-
-	// 7. Send request
 	proxyURL := ""
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var resp *http.Response
+	serviceTierRetryTried := false
+	for {
+		// 6. Build upstream request
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
+		releaseUpstreamCtx()
+		if err != nil {
+			return nil, fmt.Errorf("build upstream request: %w", err)
+		}
 
-	// 8. Handle error response with failover
-	if resp.StatusCode >= 400 {
+		if promptCacheKey != "" {
+			upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
+		}
+
+		// 7. Send request
+		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			setOpsUpstreamError(c, 0, safeErr, "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				Kind:               "request_error",
+				Message:            safeErr,
+			})
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
+			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+
+		// 8. Handle error response with failover
+		if resp.StatusCode < 400 {
+			break
+		}
+
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		if autoInjectedTuningServiceTier && !serviceTierRetryTried && isOpenAIUnsupportedServiceTier(resp.StatusCode, upstreamMsg, respBody) {
+			nextBody, derr := sjson.DeleteBytes(responsesBody, "service_tier")
+			if derr != nil {
+				return nil, fmt.Errorf("strip service_tier for retry: %w", derr)
+			}
+			responsesBody = nextBody
+			responsesReq.ServiceTier = ""
+			serviceTierRetryTried = true
+			logger.L().Info("openai chat_completions: retrying without auto service_tier after upstream rejection",
+				zap.Int64("account_id", account.ID),
+				zap.String("original_model", originalModel),
+				zap.String("upstream_model", upstreamModel),
+			)
+			continue
+		}
 		if account.Type == AccountTypeAPIKey &&
 			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
 			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
@@ -339,6 +375,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	// 9. Handle normal response
 	var result *OpenAIForwardResult

@@ -21,8 +21,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// openaiCCRawAllowedHeaders 是 CC 直转路径专用的客户端 header 透传白名单。
-//
 // **关键**：不能复用 openaiAllowedHeaders——后者含 Codex 客户端专属 header
 // （originator / session_id / x-codex-turn-state / x-codex-turn-metadata / conversation_id），
 // 这些在 ChatGPT OAuth 上游是必需的，但透传给 DeepSeek/Kimi/GLM 等第三方
@@ -40,23 +38,7 @@ var openaiCCRawAllowedHeaders = map[string]bool{
 	"user-agent":      true,
 }
 
-// forwardAsRawChatCompletions 直转客户端的 Chat Completions 请求到上游
-// `{base_url}/v1/chat/completions`，**不**做 CC↔Responses 协议转换。
-//
-// 适用场景：account.platform=openai && account.type=apikey && 上游已被探测确认
-// 不支持 /v1/responses 端点（如 DeepSeek/Kimi/GLM/Qwen 等第三方 OpenAI 兼容上游）。
-//
-// 与 ForwardAsChatCompletions 的关键差异：
-//
-//   - 不调用 apicompat.ChatCompletionsToResponses，body 仅做模型 ID 改写
-//   - 上游 URL 拼到 /v1/chat/completions 而非 /v1/responses
-//   - 流式响应 SSE 直接透传给客户端（上游 chunk 已是 CC 格式）
-//   - 非流式响应 JSON 直接透传，仅按需提取 usage
-//   - 不应用 codex OAuth transform（APIKey 路径无 OAuth）
-//   - 不注入 prompt_cache_key（OAuth 专属机制）
-//
-// 调用入口：openai_gateway_chat_completions.go::ForwardAsChatCompletions
-// 在函数顶部按 openai_compat.ShouldUseResponsesAPI 分流。
+// forwardAsRawChatCompletions forwards Chat Completions directly to the upstream chat/completions endpoint.
 func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	ctx context.Context,
 	c *gin.Context,
@@ -80,8 +62,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
-	if alias := parseOpenAIReasoningModelAlias(originalModel); alias.Effort != "" && billingModel == originalModel {
-		billingModel = alias.BaseModel
+	tuningAlias := resolveOpenAIModelTuningAlias(originalModel)
+	if tuningAlias.Effort != "" && billingModel == originalModel {
+		billingModel = tuningAlias.BaseModel
 	}
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 
@@ -95,6 +78,19 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		upstreamBody, err = sjson.SetBytes(upstreamBody, "reasoning_effort", *reasoningEffort)
 		if err != nil {
 			return nil, fmt.Errorf("inject reasoning_effort: %w", err)
+		}
+	}
+	autoInjectedTuningServiceTier := false
+	if tuningAlias.ServiceTier != "" {
+		var injected bool
+		var err error
+		upstreamBody, injected, err = injectOpenAIServiceTierBytes(upstreamBody, tuningAlias.ServiceTier)
+		if err != nil {
+			return nil, fmt.Errorf("inject service_tier: %w", err)
+		}
+		if injected {
+			autoInjectedTuningServiceTier = true
+			serviceTier = normalizeOpenAIServiceTier(tuningAlias.ServiceTier)
 		}
 	}
 
@@ -140,65 +136,84 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
 
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(upstreamBody))
-	releaseUpstreamCtx()
-	if err != nil {
-		return nil, fmt.Errorf("build upstream request: %w", err)
-	}
-	upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamProfile(upstreamReq.Context(), HTTPUpstreamProfileOpenAI))
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
-	if clientStream {
-		upstreamReq.Header.Set("Accept", "text/event-stream")
-	} else {
-		upstreamReq.Header.Set("Accept", "application/json")
-	}
-
-	// 透传白名单中的客户端 header。详见 openaiCCRawAllowedHeaders 的设计说明。
-	for key, values := range c.Request.Header {
-		lowerKey := strings.ToLower(key)
-		if openaiCCRawAllowedHeaders[lowerKey] {
-			for _, v := range values {
-				upstreamReq.Header.Add(key, v)
-			}
-		}
-	}
 	customUA := account.GetOpenAIUserAgent()
-	if customUA != "" {
-		upstreamReq.Header.Set("user-agent", customUA)
-	}
-
-	// 6. Send request
 	proxyURL := ""
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
-	}
-	defer func() { _ = resp.Body.Close() }()
 
-	// 7. Handle error response with failover
-	if resp.StatusCode >= 400 {
+	var resp *http.Response
+	serviceTierRetryTried := false
+	for {
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(upstreamBody))
+		releaseUpstreamCtx()
+		if err != nil {
+			return nil, fmt.Errorf("build upstream request: %w", err)
+		}
+		upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamProfile(upstreamReq.Context(), HTTPUpstreamProfileOpenAI))
+		upstreamReq.Header.Set("Content-Type", "application/json")
+		upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+		if clientStream {
+			upstreamReq.Header.Set("Accept", "text/event-stream")
+		} else {
+			upstreamReq.Header.Set("Accept", "application/json")
+		}
+
+		for key, values := range c.Request.Header {
+			lowerKey := strings.ToLower(key)
+			if openaiCCRawAllowedHeaders[lowerKey] {
+				for _, v := range values {
+					upstreamReq.Header.Add(key, v)
+				}
+			}
+		}
+		if customUA != "" {
+			upstreamReq.Header.Set("user-agent", customUA)
+		}
+
+		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			setOpsUpstreamError(c, 0, safeErr, "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				Kind:               "request_error",
+				Message:            safeErr,
+			})
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
+			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+
+		if resp.StatusCode < 400 {
+			break
+		}
+
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		if autoInjectedTuningServiceTier && !serviceTierRetryTried && isOpenAIUnsupportedServiceTier(resp.StatusCode, upstreamMsg, respBody) {
+			nextBody, derr := sjson.DeleteBytes(upstreamBody, "service_tier")
+			if derr != nil {
+				return nil, fmt.Errorf("strip service_tier for retry: %w", derr)
+			}
+			upstreamBody = nextBody
+			serviceTier = nil
+			serviceTierRetryTried = true
+			logger.L().Info("openai chat_completions raw: retrying without auto service_tier after upstream rejection",
+				zap.Int64("account_id", account.ID),
+				zap.String("original_model", originalModel),
+				zap.String("upstream_model", upstreamModel),
+			)
+			continue
+		}
+
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -227,6 +242,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	// 8. Forward response
 	if clientStream {
@@ -235,12 +251,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	return s.bufferRawChatCompletions(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
-// streamRawChatCompletions 透传上游 CC SSE 流到客户端，并提取 usage（包括
-// 末尾 [DONE] 之前的 chunk 中的 usage 字段，按 OpenAI CC 协议）。
-//
-// usage 字段仅在客户端请求 stream_options.include_usage=true 时出现于上游响应中。
-// 网关会对上游强制打开 include_usage 以保证计费完整，并原样向下游透传 usage，
-// 让级联代理或下游计费系统也能拿到完整用量。
+// streamRawChatCompletions forwards upstream Chat Completions SSE chunks to the client.
 func (s *OpenAIGatewayService) streamRawChatCompletions(
 	c *gin.Context,
 	resp *http.Response,
