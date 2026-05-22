@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatSumireVersionLabel } from '../versionLabel'
+import { formatSumireVersionLabel, formatSumireVersionNumber } from '../versionLabel'
 
 describe('formatSumireVersionLabel', () => {
   it('formats plain semver with v prefix and Sumire suffix', () => {
@@ -15,5 +15,12 @@ describe('formatSumireVersionLabel', () => {
   it('returns empty string for missing versions', () => {
     expect(formatSumireVersionLabel('')).toBe('')
     expect(formatSumireVersionLabel(undefined)).toBe('')
+  })
+})
+
+describe('formatSumireVersionNumber', () => {
+  it('returns only the v-prefixed semver portion', () => {
+    expect(formatSumireVersionNumber('0.1.129')).toBe('v0.1.129')
+    expect(formatSumireVersionNumber('v0.1.129 - Sumire')).toBe('v0.1.129')
   })
 })
