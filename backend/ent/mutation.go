@@ -20843,6 +20843,8 @@ type GroupMutation struct {
 	mcp_xml_inject                          *bool
 	supported_model_scopes                  *[]string
 	appendsupported_model_scopes            []string
+	custom_models                           *[]string
+	appendcustom_models                     []string
 	sort_order                              *int
 	addsort_order                           *int
 	allow_messages_dispatch                 *bool
@@ -22645,6 +22647,57 @@ func (m *GroupMutation) ResetSupportedModelScopes() {
 	m.appendsupported_model_scopes = nil
 }
 
+// SetCustomModels sets the "custom_models" field.
+func (m *GroupMutation) SetCustomModels(s []string) {
+	m.custom_models = &s
+	m.appendcustom_models = nil
+}
+
+// CustomModels returns the value of the "custom_models" field in the mutation.
+func (m *GroupMutation) CustomModels() (r []string, exists bool) {
+	v := m.custom_models
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCustomModels returns the old "custom_models" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldCustomModels(ctx context.Context) (v []string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCustomModels is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCustomModels requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCustomModels: %w", err)
+	}
+	return oldValue.CustomModels, nil
+}
+
+// AppendCustomModels adds s to the "custom_models" field.
+func (m *GroupMutation) AppendCustomModels(s []string) {
+	m.appendcustom_models = append(m.appendcustom_models, s...)
+}
+
+// AppendedCustomModels returns the list of values that were appended to the "custom_models" field in this mutation.
+func (m *GroupMutation) AppendedCustomModels() ([]string, bool) {
+	if len(m.appendcustom_models) == 0 {
+		return nil, false
+	}
+	return m.appendcustom_models, true
+}
+
+// ResetCustomModels resets all changes to the "custom_models" field.
+func (m *GroupMutation) ResetCustomModels() {
+	m.custom_models = nil
+	m.appendcustom_models = nil
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (m *GroupMutation) SetSortOrder(i int) {
 	m.sort_order = &i
@@ -23434,6 +23487,9 @@ func (m *GroupMutation) Fields() []string {
 	if m.supported_model_scopes != nil {
 		fields = append(fields, group.FieldSupportedModelScopes)
 	}
+	if m.custom_models != nil {
+		fields = append(fields, group.FieldCustomModels)
+	}
 	if m.sort_order != nil {
 		fields = append(fields, group.FieldSortOrder)
 	}
@@ -23534,6 +23590,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.McpXMLInject()
 	case group.FieldSupportedModelScopes:
 		return m.SupportedModelScopes()
+	case group.FieldCustomModels:
+		return m.CustomModels()
 	case group.FieldSortOrder:
 		return m.SortOrder()
 	case group.FieldAllowMessagesDispatch:
@@ -23627,6 +23685,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldMcpXMLInject(ctx)
 	case group.FieldSupportedModelScopes:
 		return m.OldSupportedModelScopes(ctx)
+	case group.FieldCustomModels:
+		return m.OldCustomModels(ctx)
 	case group.FieldSortOrder:
 		return m.OldSortOrder(ctx)
 	case group.FieldAllowMessagesDispatch:
@@ -23889,6 +23949,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSupportedModelScopes(v)
+		return nil
+	case group.FieldCustomModels:
+		v, ok := value.([]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCustomModels(v)
 		return nil
 	case group.FieldSortOrder:
 		v, ok := value.(int)
@@ -24360,6 +24427,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldSupportedModelScopes:
 		m.ResetSupportedModelScopes()
+		return nil
+	case group.FieldCustomModels:
+		m.ResetCustomModels()
 		return nil
 	case group.FieldSortOrder:
 		m.ResetSortOrder()

@@ -130,6 +130,48 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('OpenAI 白名单可从同平台自定义模型组导入模型', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey'],
+      groups: [
+        {
+          id: 10,
+          name: 'GPT models',
+          platform: 'openai',
+          custom_models: ['gpt-5.4', 'gpt-5.4-mini']
+        },
+        {
+          id: 11,
+          name: 'Claude models',
+          platform: 'anthropic',
+          custom_models: ['claude-sonnet-4-5']
+        }
+      ]
+    })
+
+    await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
+    const selector = wrapper.findComponent(ModelWhitelistSelector)
+    const groupSelect = selector.find('select')
+    expect(groupSelect.exists()).toBe(true)
+    expect(groupSelect.text()).toContain('GPT models')
+    expect(groupSelect.text()).not.toContain('Claude models')
+
+    await groupSelect.setValue('10')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      credentials: {
+        model_mapping: {
+          'gpt-5.4': 'gpt-5.4',
+          'gpt-5.4-mini': 'gpt-5.4-mini'
+        }
+      }
+    })
+  })
+
   it('OpenAI 账号批量编辑可开启自动透传', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

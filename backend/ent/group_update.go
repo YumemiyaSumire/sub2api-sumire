@@ -644,6 +644,18 @@ func (_u *GroupUpdate) AppendSupportedModelScopes(v []string) *GroupUpdate {
 	return _u
 }
 
+// SetCustomModels sets the "custom_models" field.
+func (_u *GroupUpdate) SetCustomModels(v []string) *GroupUpdate {
+	_u.mutation.SetCustomModels(v)
+	return _u
+}
+
+// AppendCustomModels appends value to the "custom_models" field.
+func (_u *GroupUpdate) AppendCustomModels(v []string) *GroupUpdate {
+	_u.mutation.AppendCustomModels(v)
+	return _u
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (_u *GroupUpdate) SetSortOrder(v int) *GroupUpdate {
 	_u.mutation.ResetSortOrder()
@@ -1262,6 +1274,14 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AppendedSupportedModelScopes(); ok {
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
 			sqljson.Append(u, group.FieldSupportedModelScopes, value)
+		})
+	}
+	if value, ok := _u.mutation.CustomModels(); ok {
+		_spec.SetField(group.FieldCustomModels, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCustomModels(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldCustomModels, value)
 		})
 	}
 	if value, ok := _u.mutation.SortOrder(); ok {
@@ -2216,6 +2236,18 @@ func (_u *GroupUpdateOne) AppendSupportedModelScopes(v []string) *GroupUpdateOne
 	return _u
 }
 
+// SetCustomModels sets the "custom_models" field.
+func (_u *GroupUpdateOne) SetCustomModels(v []string) *GroupUpdateOne {
+	_u.mutation.SetCustomModels(v)
+	return _u
+}
+
+// AppendCustomModels appends value to the "custom_models" field.
+func (_u *GroupUpdateOne) AppendCustomModels(v []string) *GroupUpdateOne {
+	_u.mutation.AppendCustomModels(v)
+	return _u
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (_u *GroupUpdateOne) SetSortOrder(v int) *GroupUpdateOne {
 	_u.mutation.ResetSortOrder()
@@ -2864,6 +2896,14 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if value, ok := _u.mutation.AppendedSupportedModelScopes(); ok {
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
 			sqljson.Append(u, group.FieldSupportedModelScopes, value)
+		})
+	}
+	if value, ok := _u.mutation.CustomModels(); ok {
+		_spec.SetField(group.FieldCustomModels, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCustomModels(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldCustomModels, value)
 		})
 	}
 	if value, ok := _u.mutation.SortOrder(); ok {

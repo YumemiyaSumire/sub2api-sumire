@@ -2379,6 +2379,11 @@ export default {
         hint: 'Multiple groups can be selected, accounts will be deduplicated',
         hintEdit: '⚠️ Warning: This will replace all existing account bindings'
       },
+      customModels: {
+        title: 'Custom Models',
+        placeholder: 'gpt-5.4\ngpt-5.4-mini\ngpt-5.5-high',
+        hint: 'One model per line, or separated by commas. Used only for importing into account model whitelists.'
+      },
       modelRouting: {
         title: 'Model Routing',
         tooltip: 'Configure specific model requests to be routed to designated accounts. Supports wildcard matching, e.g., claude-opus-* matches all opus models.',
@@ -3667,6 +3672,9 @@ export default {
       syncUpstreamModelsFailed: 'Failed to sync upstream models',
       syncUpstreamModelsError: 'Failed to sync upstream models: {message}',
       clearAllModels: 'Clear all models',
+      addFromModelGroup: 'Add from model group',
+      modelGroupAdded: 'Added {count} model(s) from {name}',
+      modelGroupNoChanges: 'All models in {name} are already selected',
       customModelName: 'Custom model name',
       enterCustomModelName: 'Enter custom model name',
       addModel: 'Add',

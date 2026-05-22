@@ -273,6 +273,43 @@ func TestAdminService_CreateGroup_DisablesBatchImageForNonGeminiPlatform(t *test
 }
 
 // TestAdminService_UpdateGroup_WithImagePricing 测试更新分组时 ImagePrice 字段正确更新
+func TestAdminService_CreateGroup_NormalizesCustomModels(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:           "gpt-models",
+		Platform:       PlatformOpenAI,
+		RateMultiplier: 1.0,
+		CustomModels:   []string{" gpt-5.4 ", "", "gpt-5.4-mini", "gpt-5.4"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.Equal(t, []string{"gpt-5.4", "gpt-5.4-mini"}, repo.created.CustomModels)
+	require.Equal(t, repo.created.CustomModels, group.CustomModels)
+}
+
+func TestAdminService_UpdateGroup_CustomModelsCanBeCleared(t *testing.T) {
+	existingGroup := &Group{
+		ID:           1,
+		Name:         "gpt-models",
+		Platform:     PlatformOpenAI,
+		Status:       StatusActive,
+		CustomModels: []string{"gpt-5.4"},
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	empty := []string{}
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
+		CustomModels: &empty,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.Equal(t, []string{}, repo.updated.CustomModels)
+	require.Equal(t, repo.updated.CustomModels, group.CustomModels)
+}
+
 func TestAdminService_UpdateGroup_WithImagePricing(t *testing.T) {
 	existingGroup := &Group{
 		ID:       1,

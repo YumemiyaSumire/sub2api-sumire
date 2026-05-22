@@ -65,6 +65,9 @@ type Group struct {
 	// 可选值: claude, gemini_text, gemini_image
 	SupportedModelScopes []string
 
+	// CustomModels stores reusable model names for admin-side whitelist import.
+	CustomModels []string
+
 	// 分组排序
 	SortOrder int
 

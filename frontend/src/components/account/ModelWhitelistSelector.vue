@@ -78,6 +78,21 @@
 
     <!-- Quick Actions -->
     <div class="mb-4 flex flex-wrap gap-2">
+      <select
+        v-if="customModelGroups.length > 0"
+        v-model="selectedCustomModelGroupId"
+        class="input w-auto min-w-[180px] text-sm"
+        @change="addCustomModelGroup"
+      >
+        <option value="">{{ t('admin.accounts.addFromModelGroup') }}</option>
+        <option
+          v-for="group in customModelGroups"
+          :key="group.id"
+          :value="String(group.id)"
+        >
+          {{ group.name }} ({{ group.custom_models?.length || 0 }})
+        </option>
+      </select>
       <button
         type="button"
         @click="fillRelated"
@@ -137,6 +152,7 @@ import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
+import type { AdminGroup } from '@/types'
 
 const { t } = useI18n()
 
@@ -151,6 +167,7 @@ const props = defineProps<{
     base_url?: string
     api_key: string
   }
+  groups?: AdminGroup[]
 }>()
 
 const emit = defineEmits<{
@@ -164,6 +181,7 @@ const searchQuery = ref('')
 const customModel = ref('')
 const isComposing = ref(false)
 const isSyncingUpstream = ref(false)
+const selectedCustomModelGroupId = ref('')
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
     props.platforms && props.platforms.length > 0
@@ -191,6 +209,18 @@ const canSyncUpstream = computed(() => {
     return upstreamSyncPlatforms.has(props.syncCredentials.platform.toLowerCase())
   }
   return false
+})
+
+const normalizedPlatformSet = computed(() => new Set(normalizedPlatforms.value.map(platform => platform.toLowerCase())))
+
+const customModelGroups = computed(() => {
+  const groups = props.groups || []
+  return groups.filter(group => {
+    const models = group.custom_models || []
+    if (models.length === 0) return false
+    if (normalizedPlatformSet.value.size === 0) return true
+    return normalizedPlatformSet.value.has(group.platform.toLowerCase())
+  })
 })
 
 const availableOptions = computed(() => {
@@ -258,6 +288,29 @@ const fillRelated = () => {
     }
   }
   emit('update:modelValue', newModels)
+}
+
+const addCustomModelGroup = () => {
+  const groupID = Number(selectedCustomModelGroupId.value)
+  const group = customModelGroups.value.find(item => item.id === groupID)
+  selectedCustomModelGroupId.value = ''
+  if (!group) return
+
+  const newModels = [...props.modelValue]
+  let addedCount = 0
+  for (const rawModel of group.custom_models || []) {
+    const model = rawModel.trim()
+    if (!model || newModels.includes(model)) continue
+    newModels.push(model)
+    addedCount += 1
+  }
+
+  if (addedCount === 0) {
+    appStore.showInfo(t('admin.accounts.modelGroupNoChanges', { name: group.name }))
+    return
+  }
+  emit('update:modelValue', newModels)
+  appStore.showSuccess(t('admin.accounts.modelGroupAdded', { name: group.name, count: addedCount }))
 }
 
 const syncUpstreamModels = async () => {

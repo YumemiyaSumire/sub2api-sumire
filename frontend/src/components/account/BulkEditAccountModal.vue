@@ -228,6 +228,7 @@
               <ModelWhitelistSelector
                 v-model="allowedModels"
                 :platforms="targetSelectedPlatforms"
+                :groups="groups"
               />
 
               <p class="text-xs text-gray-500 dark:text-gray-400">
@@ -1308,6 +1309,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const groups = computed(() => props.groups)
 const emit = defineEmits<{
   close: []
   updated: []
