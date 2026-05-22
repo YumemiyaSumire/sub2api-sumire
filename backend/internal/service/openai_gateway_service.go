@@ -1378,6 +1378,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalBody := body
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
+	clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
 	originalModel := reqModel
 
 	if account.Platform == PlatformGrok {
@@ -1511,7 +1512,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	if imageIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": ImageGenerationPermissionMessage()}})
+		setOpsUpstreamError(c, http.StatusForbidden, ImageGenerationPermissionMessage(), "")
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"type":    "permission_error",
+				"message": ImageGenerationPermissionMessage(),
+			},
+		})
 		return nil, errors.New("image generation disabled for group")
 	}
 
@@ -1526,9 +1533,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if billingModel == reqModel {
 			billingModel = alias.BaseModel
 		}
-		if injectOpenAIReasoningEffort(reqBody, alias.Effort) {
-			bodyModified = true
-			disablePatch()
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if injectOpenAIReasoningEffort(decoded, alias.Effort) {
+			markDecodedModified()
 		}
 	}
 	if billingModel != reqModel {
@@ -1744,6 +1754,39 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 			}
 		}
+	}
+
+	if openAIAutoPromptCacheEnabled() || clientPromptCacheRetention != "" || openAIPromptCacheForwardDebugEnabled() {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		userID := int64(0)
+		if apiKey != nil {
+			userID = apiKey.UserID
+			if apiKeyID == 0 {
+				apiKeyID = apiKey.ID
+			}
+		}
+		promptCacheOptions := openAIPromptCacheOptions{
+			Endpoint:       "responses",
+			RequestedModel: originalModel,
+			UpstreamModel:  upstreamModel,
+			UserID:         userID,
+			APIKeyID:       apiKeyID,
+			ImageIntent:    imageIntent,
+		}
+		if restoreOpenAIClientPromptCacheRetention(decoded, clientPromptCacheRetention, promptCacheOptions) {
+			markDecodedModified()
+		}
+		promptCacheApplyResult := applyOpenAIAutoPromptCacheToMap(decoded, promptCacheOptions)
+		if promptCacheApplyResult.PromptCacheKey != "" {
+			promptCacheKey = promptCacheApplyResult.PromptCacheKey
+		}
+		if promptCacheApplyResult.PromptCacheKeyAutoInjected || promptCacheApplyResult.PromptCacheRetentionAutoInjected {
+			markDecodedModified()
+		}
+		logOpenAIPromptCacheForwardDebug(promptCacheApplyResult, promptCacheOptions)
 	}
 
 	if bodyModified {
@@ -2167,7 +2210,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return forwardResult, nil
 	}
 }
-
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
 	// Determine target URL based on account type
 	var targetURL string

@@ -92,6 +92,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	clientStream := chatReq.Stream
 	includeUsage := chatReq.StreamOptions != nil && chatReq.StreamOptions.IncludeUsage
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
+	clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
 	if chatReq.ReasoningEffort == "" && reasoningEffort != nil {
 		chatReq.ReasoningEffort = *reasoningEffort
 	}
@@ -224,21 +225,51 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 	}
 
+	var promptCacheReqBody map[string]any
+	if err := json.Unmarshal(responsesBody, &promptCacheReqBody); err != nil {
+		return nil, fmt.Errorf("unmarshal for prompt cache injection: %w", err)
+	}
+	promptCacheBodyModified := false
 	if account.Type == AccountTypeAPIKey {
 		if trimmedKey := strings.TrimSpace(promptCacheKey); trimmedKey != "" {
-			var reqBody map[string]any
-			if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
-				return nil, fmt.Errorf("unmarshal for prompt cache key injection: %w", err)
-			}
-			if existing, ok := reqBody["prompt_cache_key"].(string); !ok || strings.TrimSpace(existing) == "" {
-				reqBody["prompt_cache_key"] = trimmedKey
-				responsesBody, err = json.Marshal(reqBody)
-				if err != nil {
-					return nil, fmt.Errorf("remarshal after prompt cache key injection: %w", err)
-				}
+			if existing, ok := promptCacheReqBody["prompt_cache_key"].(string); !ok || strings.TrimSpace(existing) == "" {
+				promptCacheReqBody["prompt_cache_key"] = trimmedKey
+				promptCacheBodyModified = true
 			}
 		}
 	}
+	apiKey := getAPIKeyFromContext(c)
+	userID := int64(0)
+	apiKeyID := getAPIKeyIDFromContext(c)
+	if apiKey != nil {
+		userID = apiKey.UserID
+		if apiKeyID == 0 {
+			apiKeyID = apiKey.ID
+		}
+	}
+	imageIntent := IsImageGenerationIntentMap(openAIResponsesEndpoint, originalModel, promptCacheReqBody)
+	promptCacheOptions := openAIPromptCacheOptions{
+		Endpoint:       "chat_completions",
+		RequestedModel: originalModel,
+		UpstreamModel:  upstreamModel,
+		UserID:         userID,
+		APIKeyID:       apiKeyID,
+		ImageIntent:    imageIntent,
+	}
+	if restoreOpenAIClientPromptCacheRetention(promptCacheReqBody, clientPromptCacheRetention, promptCacheOptions) {
+		promptCacheBodyModified = true
+	}
+	promptCacheApplyResult := applyOpenAIAutoPromptCacheToMap(promptCacheReqBody, promptCacheOptions)
+	if promptCacheApplyResult.PromptCacheKey != "" {
+		promptCacheKey = promptCacheApplyResult.PromptCacheKey
+	}
+	if promptCacheBodyModified || promptCacheApplyResult.PromptCacheKeyAutoInjected || promptCacheApplyResult.PromptCacheRetentionAutoInjected {
+		responsesBody, err = json.Marshal(promptCacheReqBody)
+		if err != nil {
+			return nil, fmt.Errorf("remarshal after prompt cache injection: %w", err)
+		}
+	}
+	logOpenAIPromptCacheForwardDebug(promptCacheApplyResult, promptCacheOptions)
 
 	// 4b. Apply OpenAI fast policy (may filter service_tier or block the request).
 	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, responsesBody)

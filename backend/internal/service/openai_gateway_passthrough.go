@@ -132,6 +132,44 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
 	}
+	if openAIAutoPromptCacheEnabled() || openAIPromptCacheForwardDebugEnabled() {
+		var reqBody map[string]any
+		if err := json.Unmarshal(body, &reqBody); err != nil {
+			return nil, fmt.Errorf("unmarshal passthrough body for prompt cache injection: %w", err)
+		}
+		userID := int64(0)
+		apiKeyID := getAPIKeyIDFromContext(c)
+		if apiKey != nil {
+			userID = apiKey.UserID
+			if apiKeyID == 0 {
+				apiKeyID = apiKey.ID
+			}
+		}
+		upstreamModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		if upstreamModel == "" {
+			upstreamModel = reqModel
+		}
+		imageIntent := IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody)
+		promptCacheOptions := openAIPromptCacheOptions{
+			Endpoint:       "responses",
+			RequestedModel: reqModel,
+			UpstreamModel:  upstreamModel,
+			UserID:         userID,
+			APIKeyID:       apiKeyID,
+			ImageIntent:    imageIntent,
+		}
+		clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
+		promptCacheBodyModified := restoreOpenAIClientPromptCacheRetention(reqBody, clientPromptCacheRetention, promptCacheOptions)
+		promptCacheApplyResult := applyOpenAIAutoPromptCacheToMap(reqBody, promptCacheOptions)
+		if promptCacheBodyModified || promptCacheApplyResult.PromptCacheKeyAutoInjected || promptCacheApplyResult.PromptCacheRetentionAutoInjected {
+			nextBody, err := json.Marshal(reqBody)
+			if err != nil {
+				return nil, fmt.Errorf("remarshal passthrough body after prompt cache injection: %w", err)
+			}
+			body = nextBody
+		}
+		logOpenAIPromptCacheForwardDebug(promptCacheApplyResult, promptCacheOptions)
+	}
 
 	logger.LegacyPrintf("service.openai_gateway",
 		"[OpenAI 自动透传] 命中自动透传分支: account=%d name=%s type=%s model=%s stream=%v",
