@@ -2313,6 +2313,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	originalBody := body
 	reqModel, reqStream, promptCacheKey := extractOpenAIRequestMetaFromBody(body)
+	clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
 	originalModel := reqModel
 
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
@@ -2385,8 +2386,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
 	}
 	codexImageGenerationBridgeEnabled := isCodexCLI && imageGenerationAllowed && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
-	if IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody) && !imageGenerationAllowed {
+	imageIntent := IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody)
+	if imageIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+		setOpsUpstreamError(c, http.StatusForbidden, ImageGenerationPermissionMessage(), "")
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": gin.H{
 				"type":    "permission_error",
@@ -2736,7 +2739,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	imageBillingModel := ""
 	imageSizeTier := ""
 	imageInputSize := ""
-	if IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody) {
+	imageIntent = IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody)
+	if imageIntent {
 		var imageCfgErr error
 		imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailed(reqBody, billingModel)
 		if imageCfgErr != nil {
@@ -2754,6 +2758,35 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
 	}
+	userID := int64(0)
+	apiKeyID = getAPIKeyIDFromContext(c)
+	if apiKey != nil {
+		userID = apiKey.UserID
+		if apiKeyID == 0 {
+			apiKeyID = apiKey.ID
+		}
+	}
+	promptCacheOptions := openAIPromptCacheOptions{
+		Endpoint:       "responses",
+		RequestedModel: originalModel,
+		UpstreamModel:  upstreamModel,
+		UserID:         userID,
+		APIKeyID:       apiKeyID,
+		ImageIntent:    imageIntent,
+	}
+	if restoreOpenAIClientPromptCacheRetention(reqBody, clientPromptCacheRetention, promptCacheOptions) {
+		bodyModified = true
+		disablePatch()
+	}
+	promptCacheApplyResult := applyOpenAIAutoPromptCacheToMap(reqBody, promptCacheOptions)
+	if promptCacheApplyResult.PromptCacheKey != "" {
+		promptCacheKey = promptCacheApplyResult.PromptCacheKey
+	}
+	if promptCacheApplyResult.PromptCacheKeyAutoInjected || promptCacheApplyResult.PromptCacheRetentionAutoInjected {
+		bodyModified = true
+		disablePatch()
+	}
+	logOpenAIPromptCacheForwardDebug(promptCacheApplyResult, promptCacheOptions)
 
 	// Re-serialize body only if modified
 	if bodyModified {
@@ -3261,6 +3294,44 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageBillingModel = imageCfg.Model
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
+	}
+	if openAIAutoPromptCacheEnabled() || openAIPromptCacheForwardDebugEnabled() {
+		var reqBody map[string]any
+		if err := json.Unmarshal(body, &reqBody); err != nil {
+			return nil, fmt.Errorf("unmarshal passthrough body for prompt cache injection: %w", err)
+		}
+		userID := int64(0)
+		apiKeyID := getAPIKeyIDFromContext(c)
+		if apiKey != nil {
+			userID = apiKey.UserID
+			if apiKeyID == 0 {
+				apiKeyID = apiKey.ID
+			}
+		}
+		upstreamModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		if upstreamModel == "" {
+			upstreamModel = reqModel
+		}
+		imageIntent := IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody)
+		promptCacheOptions := openAIPromptCacheOptions{
+			Endpoint:       "responses",
+			RequestedModel: reqModel,
+			UpstreamModel:  upstreamModel,
+			UserID:         userID,
+			APIKeyID:       apiKeyID,
+			ImageIntent:    imageIntent,
+		}
+		clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
+		promptCacheBodyModified := restoreOpenAIClientPromptCacheRetention(reqBody, clientPromptCacheRetention, promptCacheOptions)
+		promptCacheApplyResult := applyOpenAIAutoPromptCacheToMap(reqBody, promptCacheOptions)
+		if promptCacheBodyModified || promptCacheApplyResult.PromptCacheKeyAutoInjected || promptCacheApplyResult.PromptCacheRetentionAutoInjected {
+			nextBody, err := json.Marshal(reqBody)
+			if err != nil {
+				return nil, fmt.Errorf("remarshal passthrough body after prompt cache injection: %w", err)
+			}
+			body = nextBody
+		}
+		logOpenAIPromptCacheForwardDebug(promptCacheApplyResult, promptCacheOptions)
 	}
 
 	logger.LegacyPrintf("service.openai_gateway",
