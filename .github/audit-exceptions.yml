@@ -35,3 +35,10 @@ exceptions:
     mitigation: "Proxy configuration not user-controlled; upgrade when axios releases fix"
     expires_on: "2026-07-10"
     owner: "security@your-domain"
+  - package: js-cookie
+    advisory: "GHSA-qjx8-664m-686j"
+    severity: high
+    reason: "Transitive frontend dependency only; application code does not import js-cookie directly or build cookie attributes from untrusted input"
+    mitigation: "Keep cookie attribute values application-controlled and upgrade the transitive dependency chain when upstream releases a patched path"
+    expires_on: "2026-07-22"
+    owner: "security@your-domain"
