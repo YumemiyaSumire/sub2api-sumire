@@ -20,6 +20,7 @@ func TestAccountSearchPredicateIncludesCredentialsEmail(t *testing.T) {
 	query, args := selector.Query()
 	require.Contains(t, query, `"accounts"."name" ILIKE`)
 	require.Contains(t, query, `COALESCE("accounts"."credentials"->>'email', '')`)
-	require.Contains(t, query, `LOWER(?)`)
+	require.Contains(t, query, `COALESCE("accounts"."credentials"->>'email', '') ILIKE $2`)
+	require.NotContains(t, query, `?`, "postgres SQL must not retain raw ? placeholders")
 	require.Equal(t, []any{"%goldazanola%", "%GOLDAZANOLA%"}, args)
 }

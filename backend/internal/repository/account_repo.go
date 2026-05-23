@@ -656,7 +656,11 @@ func accountSearchPredicate(search string) dbpredicate.Account {
 		dbaccount.NameContainsFold(search),
 		dbpredicate.Account(func(s *entsql.Selector) {
 			credentialsEmail := "COALESCE(" + s.C(dbaccount.FieldCredentials) + "->>'email', '')"
-			s.Where(entsql.ExprP("LOWER("+credentialsEmail+") LIKE LOWER(?)", "%"+search+"%"))
+			s.Where(entsql.P(func(b *entsql.Builder) {
+				b.WriteString(credentialsEmail).
+					WriteString(" ILIKE ").
+					Arg("%" + search + "%")
+			}))
 		}),
 	)
 }
