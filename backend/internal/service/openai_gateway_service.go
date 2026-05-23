@@ -2070,6 +2070,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	httpInvalidEncryptedContentRetryTried := false
 	httpTuningServiceTierRetryTried := false
+	httpPromptCacheRetentionRetryTried := false
 	for {
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -2129,6 +2130,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				httpTuningServiceTierRetryTried = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying request once without auto service_tier after upstream rejection (account: %s)", account.Name)
+				continue
+			}
+			if promptCacheApplyResult.PromptCacheRetentionAutoInjected && !httpPromptCacheRetentionRetryTried &&
+				isOpenAIUnsupportedTopLevelParameter(resp.StatusCode, upstreamMsg, respBody, "prompt_cache_retention") {
+				// Some OAuth/compatible upstreams reject prompt_cache_retention. Drop only
+				// the auto-injected field and retry once so a misconfigured retention value
+				// does not surface as 502.
+				delete(reqBody, "prompt_cache_retention")
+				body, err = json.Marshal(reqBody)
+				if err != nil {
+					return nil, fmt.Errorf("serialize prompt_cache_retention fallback retry body: %w", err)
+				}
+				httpPromptCacheRetentionRetryTried = true
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying request once without auto prompt_cache_retention after upstream rejection (account: %s)", account.Name)
 				continue
 			}
 			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {

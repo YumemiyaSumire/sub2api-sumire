@@ -89,17 +89,26 @@ func injectOpenAIServiceTierBytes(body []byte, tier string) ([]byte, bool, error
 	return updated, true, nil
 }
 
-func isOpenAIUnsupportedServiceTier(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+func isOpenAIUnsupportedTopLevelParameter(statusCode int, upstreamMsg string, upstreamBody []byte, field string) bool {
 	if statusCode != http.StatusBadRequest {
 		return false
 	}
 
+	field = strings.ToLower(strings.TrimSpace(field))
+	if field == "" {
+		return false
+	}
+
 	combined := strings.ToLower(strings.TrimSpace(upstreamMsg + "\n" + string(upstreamBody)))
-	if !strings.Contains(combined, "service_tier") {
+	if !strings.Contains(combined, field) {
 		return false
 	}
 	return strings.Contains(combined, "unsupported parameter") ||
 		strings.Contains(combined, "not supported") ||
 		strings.Contains(combined, "unknown parameter") ||
 		strings.Contains(combined, "unknown field")
+}
+
+func isOpenAIUnsupportedServiceTier(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	return isOpenAIUnsupportedTopLevelParameter(statusCode, upstreamMsg, upstreamBody, "service_tier")
 }

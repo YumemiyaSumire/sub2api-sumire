@@ -552,8 +552,8 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 			q = q.Where(dbaccount.StatusEQ(status))
 		}
 	}
-	if search != "" {
-		q = q.Where(dbaccount.NameContainsFold(search))
+	if search = strings.TrimSpace(search); search != "" {
+		q = q.Where(accountSearchPredicate(search))
 	}
 	if groupID == service.AccountListGroupUngrouped {
 		q = q.Where(dbaccount.Not(dbaccount.HasAccountGroups()))
@@ -649,6 +649,16 @@ func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platfor
 		return nil, err
 	}
 	return r.accountsToService(ctx, accounts)
+}
+
+func accountSearchPredicate(search string) dbpredicate.Account {
+	return dbaccount.Or(
+		dbaccount.NameContainsFold(search),
+		dbpredicate.Account(func(s *entsql.Selector) {
+			credentialsEmail := "COALESCE(" + s.C(dbaccount.FieldCredentials) + "->>'email', '')"
+			s.Where(entsql.ExprP("LOWER("+credentialsEmail+") LIKE LOWER(?)", "%"+search+"%"))
+		}),
+	)
 }
 
 func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {

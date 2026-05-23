@@ -925,6 +925,39 @@ func TestIsOpenAIUnsupportedServiceTier(t *testing.T) {
 	))
 }
 
+func TestIsOpenAIUnsupportedTopLevelParameter(t *testing.T) {
+	require.True(t, isOpenAIUnsupportedTopLevelParameter(
+		http.StatusBadRequest,
+		"Unsupported parameter: prompt_cache_retention",
+		[]byte(`{"error":{"message":"Unsupported parameter: prompt_cache_retention"}}`),
+		"prompt_cache_retention",
+	))
+	require.True(t, isOpenAIUnsupportedTopLevelParameter(
+		http.StatusBadRequest,
+		"",
+		[]byte(`{"detail":"unknown field prompt_cache_retention"}`),
+		"prompt_cache_retention",
+	))
+	require.False(t, isOpenAIUnsupportedTopLevelParameter(
+		http.StatusInternalServerError,
+		"Unsupported parameter: prompt_cache_retention",
+		[]byte(`{"error":{"message":"Unsupported parameter: prompt_cache_retention"}}`),
+		"prompt_cache_retention",
+	))
+	require.False(t, isOpenAIUnsupportedTopLevelParameter(
+		http.StatusBadRequest,
+		"Unsupported parameter: service_tier",
+		[]byte(`{"error":{"message":"Unsupported parameter: service_tier"}}`),
+		"prompt_cache_retention",
+	))
+	require.False(t, isOpenAIUnsupportedTopLevelParameter(
+		http.StatusBadRequest,
+		"prompt_cache_retention had another validation problem",
+		[]byte(`{"error":{"message":"prompt_cache_retention had another validation problem"}}`),
+		"prompt_cache_retention",
+	))
+}
+
 func TestInjectOpenAIReasoningEffort(t *testing.T) {
 	reqBody := map[string]any{"model": "gpt-5.5-high"}
 	require.True(t, injectOpenAIReasoningEffort(reqBody, "high"))
