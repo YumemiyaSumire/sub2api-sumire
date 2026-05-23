@@ -155,3 +155,12 @@ func TestMigration135AllowsGitHubAndGoogleAuthProviders(t *testing.T) {
 	require.Contains(t, sql, "'github'")
 	require.Contains(t, sql, "'google'")
 }
+
+func TestMigration143AvoidsReservedWindowColumnName(t *testing.T) {
+	content, err := FS.ReadFile("143_oauth_sleeper_events.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "usage_window VARCHAR(64) NOT NULL")
+	require.NotContains(t, sql, "\n    window VARCHAR(64) NOT NULL")
+}

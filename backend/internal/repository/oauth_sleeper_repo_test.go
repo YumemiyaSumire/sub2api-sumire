@@ -167,7 +167,7 @@ func TestOAuthSleeperRepositoryListEventsPaginatesNewestFirst(t *testing.T) {
 			"account_id",
 			"account_name",
 			"platform",
-			"window",
+			"usage_window",
 			"utilization_percent",
 			"threshold_percent",
 			"reset_at",

@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS oauth_sleeper_events (
     account_id BIGINT NOT NULL,
     account_name VARCHAR(100) NOT NULL DEFAULT '',
     platform VARCHAR(50) NOT NULL,
-    window VARCHAR(64) NOT NULL,
+    usage_window VARCHAR(64) NOT NULL,
     utilization_percent NUMERIC(8,4) NOT NULL,
     threshold_percent NUMERIC(8,4) NOT NULL,
     reset_at TIMESTAMPTZ NOT NULL,
