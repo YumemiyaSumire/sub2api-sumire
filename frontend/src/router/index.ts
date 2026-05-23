@@ -489,6 +489,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/oauth-sleeper',
+    name: 'AdminOAuthSleeper',
+    component: () => import('@/views/admin/OAuthSleeperView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'OAuth Sleeper',
+      titleKey: 'admin.oauthSleeper.title',
+      descriptionKey: 'admin.oauthSleeper.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),

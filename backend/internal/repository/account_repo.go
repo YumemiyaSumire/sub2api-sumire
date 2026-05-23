@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -1089,6 +1090,306 @@ func (r *accountRepository) SetRateLimited(ctx context.Context, id int64, resetA
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil
+}
+
+func (r *accountRepository) SetRateLimitedIfLater(ctx context.Context, id int64, resetAt time.Time) (bool, *time.Time, error) {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	updated, previous, err := r.setRateLimitedIfLaterWithExec(ctx, tx, id, resetAt)
+	if err != nil || !updated {
+		return updated, previous, err
+	}
+	if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		return false, nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, nil, err
+	}
+	committed = true
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return true, previous, nil
+}
+
+func (r *accountRepository) setRateLimitedIfLaterWithExec(ctx context.Context, exec sqlExecutor, id int64, resetAt time.Time) (bool, *time.Time, error) {
+	if exec == nil {
+		return false, nil, errors.New("nil sql executor")
+	}
+	rows, err := exec.QueryContext(ctx, `
+		WITH target AS (
+			SELECT id, rate_limit_reset_at AS previous_rate_limit_reset_at
+			FROM accounts
+			WHERE id = $2
+				AND deleted_at IS NULL
+				AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at < $1)
+			FOR UPDATE
+		),
+		updated AS (
+		UPDATE accounts
+		SET rate_limited_at = NOW(),
+			rate_limit_reset_at = $1,
+			updated_at = NOW()
+			FROM target
+			WHERE accounts.id = target.id
+			RETURNING target.previous_rate_limit_reset_at
+		)
+		SELECT previous_rate_limit_reset_at FROM updated
+	`, resetAt, id)
+	if err != nil {
+		return false, nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, nil, err
+		}
+		return false, nil, nil
+	}
+
+	var previous sql.NullTime
+	if err := rows.Scan(&previous); err != nil {
+		return false, nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return false, nil, err
+	}
+	if previous.Valid {
+		t := previous.Time
+		return true, &t, nil
+	}
+	return true, nil, nil
+}
+
+func (r *accountRepository) CreateOAuthSleeperEventAfterRateLimit(ctx context.Context, event *service.OAuthSleeperEvent) (updated bool, err error) {
+	if r == nil || r.client == nil {
+		return false, errors.New("nil account repository")
+	}
+	if event == nil {
+		return false, errors.New("nil oauth sleeper event")
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	updated, previous, err := r.setRateLimitedIfLaterWithExec(ctx, tx, event.AccountID, event.ResetAt)
+	if err != nil || !updated {
+		return updated, err
+	}
+	event.PreviousRateLimitResetAt = previous
+	if err = r.createOAuthSleeperEventWithExec(ctx, tx, event); err != nil {
+		return false, err
+	}
+	if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &event.AccountID, nil, nil); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	committed = true
+	r.syncSchedulerAccountSnapshot(ctx, event.AccountID)
+	return true, nil
+}
+
+func (r *accountRepository) createOAuthSleeperEventWithExec(ctx context.Context, exec sqlExecutor, event *service.OAuthSleeperEvent) error {
+	if exec == nil {
+		return errors.New("nil sql executor")
+	}
+	if event == nil {
+		return errors.New("nil oauth sleeper event")
+	}
+	createdAt := event.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	rows, err := exec.QueryContext(ctx, `
+		INSERT INTO oauth_sleeper_events (
+			account_id,
+			account_name,
+			platform,
+			window,
+			utilization_percent,
+			threshold_percent,
+			reset_at,
+			previous_rate_limit_reset_at,
+			created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, created_at
+	`,
+		event.AccountID,
+		event.AccountName,
+		event.Platform,
+		event.Window,
+		event.UtilizationPercent,
+		event.ThresholdPercent,
+		event.ResetAt,
+		event.PreviousRateLimitResetAt,
+		createdAt,
+	)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
+	if err := rows.Scan(&event.ID, &event.CreatedAt); err != nil {
+		return err
+	}
+	return rows.Err()
+}
+
+func (r *accountRepository) ListOAuthSleeperAccounts(ctx context.Context, platforms []string) ([]service.Account, error) {
+	if len(platforms) == 0 {
+		return []service.Account{}, nil
+	}
+	accounts, err := r.client.Account.Query().
+		Where(
+			dbaccount.DeletedAtIsNil(),
+			dbaccount.StatusEQ(service.StatusActive),
+			dbaccount.TypeEQ(service.AccountTypeOAuth),
+			dbaccount.PlatformIn(platforms...),
+		).
+		Order(dbent.Asc(dbaccount.FieldPlatform), dbent.Asc(dbaccount.FieldID)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.accountsToService(ctx, accounts)
+}
+
+func (r *accountRepository) ListOAuthSleeperEvents(ctx context.Context, params pagination.PaginationParams) ([]service.OAuthSleeperEvent, *pagination.PaginationResult, error) {
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := params.Limit()
+	params.Page = page
+	params.PageSize = pageSize
+
+	var total int64
+	if err := scanSingleRow(ctx, r.sql, "SELECT COUNT(*) FROM oauth_sleeper_events", nil, &total); err != nil {
+		return nil, nil, err
+	}
+
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT
+			id,
+			account_id,
+			account_name,
+			platform,
+			window,
+			utilization_percent,
+			threshold_percent,
+			reset_at,
+			previous_rate_limit_reset_at,
+			created_at
+		FROM oauth_sleeper_events
+		ORDER BY created_at DESC, id DESC
+		LIMIT $1 OFFSET $2
+	`, pageSize, params.Offset())
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	events := make([]service.OAuthSleeperEvent, 0, pageSize)
+	for rows.Next() {
+		var event service.OAuthSleeperEvent
+		var previous sql.NullTime
+		if err := rows.Scan(
+			&event.ID,
+			&event.AccountID,
+			&event.AccountName,
+			&event.Platform,
+			&event.Window,
+			&event.UtilizationPercent,
+			&event.ThresholdPercent,
+			&event.ResetAt,
+			&previous,
+			&event.CreatedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		if previous.Valid {
+			t := previous.Time
+			event.PreviousRateLimitResetAt = &t
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return events, paginationResultFromTotal(total, params), nil
+}
+
+func (r *accountRepository) ListOAuthSleeperSleepingAccounts(ctx context.Context, platforms []string, now time.Time, limit int) ([]service.OAuthSleeperSleepingAccount, error) {
+	if len(platforms) == 0 {
+		return []service.OAuthSleeperSleepingAccount{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, name, platform, rate_limit_reset_at
+		FROM accounts
+		WHERE deleted_at IS NULL
+			AND status = $1
+			AND type = $2
+			AND platform = ANY($3)
+			AND rate_limit_reset_at IS NOT NULL
+			AND rate_limit_reset_at > $4
+		ORDER BY rate_limit_reset_at DESC, id ASC
+		LIMIT $5
+	`, service.StatusActive, service.AccountTypeOAuth, pq.Array(platforms), now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	accounts := make([]service.OAuthSleeperSleepingAccount, 0, limit)
+	for rows.Next() {
+		var account service.OAuthSleeperSleepingAccount
+		if err := rows.Scan(&account.AccountID, &account.AccountName, &account.Platform, &account.RateLimitResetAt); err != nil {
+			return nil, err
+		}
+		account.RemainingSeconds = int64(math.Ceil(account.RateLimitResetAt.Sub(now).Seconds()))
+		if account.RemainingSeconds < 0 {
+			account.RemainingSeconds = 0
+		}
+		accounts = append(accounts, account)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return accounts, nil
 }
 
 func (r *accountRepository) SetModelRateLimit(ctx context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {

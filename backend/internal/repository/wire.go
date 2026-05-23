@@ -62,6 +62,13 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 	return newSchedulerCacheWithChunkSizes(rdb, mgetChunkSize, writeChunkSize)
 }
 
+func ProvideOAuthSleeperRepository(accountRepo service.AccountRepository) service.OAuthSleeperRepository {
+	if repo, ok := accountRepo.(service.OAuthSleeperRepository); ok {
+		return repo
+	}
+	panic("account repository does not implement OAuthSleeperRepository")
+}
+
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
 	NewUserRepository,
@@ -95,6 +102,7 @@ var ProviderSet = wire.NewSet(
 	NewAffiliateRepository,
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota
 	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
+	ProvideOAuthSleeperRepository,
 
 	// Cache implementations
 	NewGatewayCache,

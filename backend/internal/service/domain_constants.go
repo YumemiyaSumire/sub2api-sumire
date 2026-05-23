@@ -371,6 +371,9 @@ const (
 	// SettingKeyRateLimit429CooldownSettings stores JSON config for 429 fallback cooldown handling.
 	SettingKeyRateLimit429CooldownSettings = "rate_limit_429_cooldown_settings"
 
+	// SettingKeyOAuthSleeperSettings stores JSON config for OAuth usage-limit sleeper protection.
+	SettingKeyOAuthSleeperSettings = "oauth_sleeper_settings"
+
 	// =========================
 	// Stream Timeout Handling
 	// =========================

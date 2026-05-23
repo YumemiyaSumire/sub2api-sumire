@@ -28,6 +28,7 @@ func RegisterAdminRoutes(
 
 		// 账号管理
 		registerAccountRoutes(admin, h)
+		registerOAuthSleeperRoutes(admin, h)
 
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
@@ -97,6 +98,17 @@ func RegisterAdminRoutes(
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+	}
+}
+
+func registerOAuthSleeperRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	sleeper := admin.Group("/oauth-sleeper")
+	{
+		sleeper.GET("/status", h.Admin.OAuthSleeper.GetStatus)
+		sleeper.GET("/settings", h.Admin.OAuthSleeper.GetSettings)
+		sleeper.PUT("/settings", h.Admin.OAuthSleeper.UpdateSettings)
+		sleeper.POST("/scan-once", h.Admin.OAuthSleeper.ScanOnce)
+		sleeper.GET("/events", h.Admin.OAuthSleeper.ListEvents)
 	}
 }
 

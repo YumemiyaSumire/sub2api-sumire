@@ -571,6 +571,7 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorService,
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorRequestTemplateService,
+	ProvideOAuthSleeperService,
 )
 
 // ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named
@@ -618,4 +619,10 @@ func ProvideChannelMonitorRunner(svc *ChannelMonitorService, settingService *Set
 	svc.SetScheduler(r)
 	r.Start()
 	return r
+}
+
+func ProvideOAuthSleeperService(repo OAuthSleeperRepository, settingRepo SettingRepository) *OAuthSleeperService {
+	svc := NewOAuthSleeperService(repo, settingRepo)
+	svc.Start()
+	return svc
 }
