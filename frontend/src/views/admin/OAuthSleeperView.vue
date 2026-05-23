@@ -54,9 +54,9 @@
                     {{ item.badge }}
                   </span>
                 </div>
-                <div class="mt-1 flex min-w-0 items-baseline gap-2">
+                <div class="mt-1 min-w-0">
                   <p class="truncate text-xl font-semibold leading-7 text-gray-900 dark:text-white">{{ item.value }}</p>
-                  <p v-if="item.meta" class="truncate text-xs text-gray-500 dark:text-gray-400">{{ item.meta }}</p>
+                  <p v-if="item.meta" class="mt-0.5 text-xs leading-4 text-gray-500 dark:text-gray-400">{{ item.meta }}</p>
                 </div>
               </div>
             </div>
