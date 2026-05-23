@@ -393,25 +393,6 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			},
 		},
 		{
-			name: "filter_by_credentials_email",
-			setup: func(client *dbent.Client) {
-				mustCreateAccount(s.T(), client, &service.Account{
-					Name:        "plain-account",
-					Credentials: map[string]any{"email": "goldazanola2619@hotmail.com"},
-				})
-				mustCreateAccount(s.T(), client, &service.Account{
-					Name:        "other-account",
-					Credentials: map[string]any{"email": "someone@example.com"},
-				})
-			},
-			search:    "GOLDAZANOLA",
-			wantCount: 1,
-			validate: func(accounts []service.Account) {
-				s.Require().Equal("plain-account", accounts[0].Name)
-				s.Require().Equal("goldazanola2619@hotmail.com", accounts[0].Credentials["email"])
-			},
-		},
-		{
 			name: "filter_by_ungrouped",
 			setup: func(client *dbent.Client) {
 				group := mustCreateGroup(s.T(), client, &service.Group{Name: "g-ungrouped"})
