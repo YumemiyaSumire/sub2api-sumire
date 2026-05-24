@@ -1262,8 +1262,8 @@ func (r *accountRepository) createOAuthSleeperEventWithExec(ctx context.Context,
 	return rows.Err()
 }
 
-func (r *accountRepository) ListOAuthSleeperAccounts(ctx context.Context, platforms []string) ([]service.Account, error) {
-	if len(platforms) == 0 {
+func (r *accountRepository) ListOAuthSleeperAccounts(ctx context.Context, platforms []string, groupIDs []int64) ([]service.Account, error) {
+	if len(platforms) == 0 || len(groupIDs) == 0 {
 		return []service.Account{}, nil
 	}
 	accounts, err := r.client.Account.Query().
@@ -1272,6 +1272,7 @@ func (r *accountRepository) ListOAuthSleeperAccounts(ctx context.Context, platfo
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.TypeEQ(service.AccountTypeOAuth),
 			dbaccount.PlatformIn(platforms...),
+			dbaccount.HasAccountGroupsWith(dbaccountgroup.GroupIDIn(groupIDs...)),
 		).
 		Order(dbent.Asc(dbaccount.FieldPlatform), dbent.Asc(dbaccount.FieldID)).
 		All(ctx)
@@ -1279,6 +1280,33 @@ func (r *accountRepository) ListOAuthSleeperAccounts(ctx context.Context, platfo
 		return nil, err
 	}
 	return r.accountsToService(ctx, accounts)
+}
+
+func (r *accountRepository) ListOAuthSleeperGroups(ctx context.Context, groupIDs []int64) ([]service.OAuthSleeperGroup, error) {
+	if len(groupIDs) == 0 {
+		return []service.OAuthSleeperGroup{}, nil
+	}
+	groups, err := r.client.Group.Query().
+		Where(
+			dbgroup.IDIn(groupIDs...),
+			dbgroup.DeletedAtIsNil(),
+			dbgroup.StatusEQ(service.StatusActive),
+			dbgroup.PlatformIn(service.PlatformOpenAI, service.PlatformAnthropic),
+		).
+		Order(dbent.Asc(dbgroup.FieldID)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.OAuthSleeperGroup, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, service.OAuthSleeperGroup{
+			ID:       group.ID,
+			Name:     group.Name,
+			Platform: group.Platform,
+		})
+	}
+	return out, nil
 }
 
 func (r *accountRepository) ListOAuthSleeperEvents(ctx context.Context, params pagination.PaginationParams) ([]service.OAuthSleeperEvent, *pagination.PaginationResult, error) {
@@ -1348,25 +1376,27 @@ func (r *accountRepository) ListOAuthSleeperEvents(ctx context.Context, params p
 	return events, paginationResultFromTotal(total, params), nil
 }
 
-func (r *accountRepository) ListOAuthSleeperSleepingAccounts(ctx context.Context, platforms []string, now time.Time, limit int) ([]service.OAuthSleeperSleepingAccount, error) {
-	if len(platforms) == 0 {
+func (r *accountRepository) ListOAuthSleeperSleepingAccounts(ctx context.Context, platforms []string, groupIDs []int64, now time.Time, limit int) ([]service.OAuthSleeperSleepingAccount, error) {
+	if len(platforms) == 0 || len(groupIDs) == 0 {
 		return []service.OAuthSleeperSleepingAccount{}, nil
 	}
 	if limit <= 0 {
 		limit = 20
 	}
 	rows, err := r.sql.QueryContext(ctx, `
-		SELECT id, name, platform, rate_limit_reset_at
-		FROM accounts
-		WHERE deleted_at IS NULL
-			AND status = $1
-			AND type = $2
-			AND platform = ANY($3)
-			AND rate_limit_reset_at IS NOT NULL
-			AND rate_limit_reset_at > $4
-		ORDER BY rate_limit_reset_at DESC, id ASC
-		LIMIT $5
-	`, service.StatusActive, service.AccountTypeOAuth, pq.Array(platforms), now, limit)
+		SELECT DISTINCT a.id, a.name, a.platform, a.rate_limit_reset_at
+		FROM accounts a
+		JOIN account_groups ag ON ag.account_id = a.id
+		WHERE a.deleted_at IS NULL
+			AND a.status = $1
+			AND a.type = $2
+			AND a.platform = ANY($3)
+			AND ag.group_id = ANY($4)
+			AND a.rate_limit_reset_at IS NOT NULL
+			AND a.rate_limit_reset_at > $5
+		ORDER BY a.rate_limit_reset_at DESC, a.id ASC
+		LIMIT $6
+	`, service.StatusActive, service.AccountTypeOAuth, pq.Array(platforms), pq.Array(groupIDs), now, limit)
 	if err != nil {
 		return nil, err
 	}

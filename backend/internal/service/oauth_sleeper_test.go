@@ -16,6 +16,7 @@ type oauthSleeperRepoStub struct {
 	accounts []Account
 
 	mu        sync.Mutex
+	groups    []OAuthSleeperGroup
 	events    []OAuthSleeperEvent
 	updates   []int64
 	existing  map[int64]*time.Time
@@ -24,11 +25,30 @@ type oauthSleeperRepoStub struct {
 	eventErr  error
 }
 
-func (r *oauthSleeperRepoStub) ListOAuthSleeperAccounts(context.Context, []string) ([]Account, error) {
+func (r *oauthSleeperRepoStub) ListOAuthSleeperAccounts(context.Context, []string, []int64) ([]Account, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.listCalls++
 	return append([]Account(nil), r.accounts...), nil
+}
+
+func (r *oauthSleeperRepoStub) ListOAuthSleeperGroups(_ context.Context, groupIDs []int64) ([]OAuthSleeperGroup, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(groupIDs) == 0 {
+		return []OAuthSleeperGroup{}, nil
+	}
+	allowed := map[int64]struct{}{}
+	for _, id := range groupIDs {
+		allowed[id] = struct{}{}
+	}
+	groups := make([]OAuthSleeperGroup, 0, len(r.groups))
+	for _, group := range r.groups {
+		if _, ok := allowed[group.ID]; ok {
+			groups = append(groups, group)
+		}
+	}
+	return groups, nil
 }
 
 func (r *oauthSleeperRepoStub) CreateOAuthSleeperEventAfterRateLimit(_ context.Context, event *OAuthSleeperEvent) (bool, error) {
@@ -59,7 +79,7 @@ func (r *oauthSleeperRepoStub) ListOAuthSleeperEvents(context.Context, paginatio
 	return append([]OAuthSleeperEvent(nil), r.events...), &pagination.PaginationResult{Total: int64(len(r.events)), Page: 1, PageSize: 20, Pages: 1}, nil
 }
 
-func (r *oauthSleeperRepoStub) ListOAuthSleeperSleepingAccounts(context.Context, []string, time.Time, int) ([]OAuthSleeperSleepingAccount, error) {
+func (r *oauthSleeperRepoStub) ListOAuthSleeperSleepingAccounts(context.Context, []string, []int64, time.Time, int) ([]OAuthSleeperSleepingAccount, error) {
 	return []OAuthSleeperSleepingAccount{}, nil
 }
 
@@ -198,6 +218,10 @@ func TestOAuthSleeperEvaluateAnthropicFraction(t *testing.T) {
 func TestOAuthSleeperScanCapsPerPlatformAndSortsCandidates(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	repo := &oauthSleeperRepoStub{
+		groups: []OAuthSleeperGroup{
+			{ID: 1, Name: "OpenAI", Platform: PlatformOpenAI},
+			{ID: 2, Name: "Anthropic", Platform: PlatformAnthropic},
+		},
 		accounts: []Account{
 			openAISleeperAccount(1, 98, now.Add(1*time.Hour)),
 			openAISleeperAccount(2, 99, now.Add(2*time.Hour)),
@@ -210,6 +234,7 @@ func TestOAuthSleeperScanCapsPerPlatformAndSortsCandidates(t *testing.T) {
 	svc.now = func() time.Time { return now }
 	settings := *DefaultOAuthSleeperSettings()
 	settings.MaxSleepPerScan = 2
+	settings.GroupIDs = []int64{1, 2}
 
 	result, err := svc.runScan(context.Background(), settings)
 	require.NoError(t, err)
@@ -224,11 +249,14 @@ func TestOAuthSleeperScanDoesNotRecordEventWhenExistingResetIsLater(t *testing.T
 	repo := &oauthSleeperRepoStub{
 		accounts: []Account{openAISleeperAccount(1, 99, now.Add(time.Hour))},
 		existing: map[int64]*time.Time{1: &later},
+		groups:   []OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: PlatformOpenAI}},
 	}
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
 	svc.now = func() time.Time { return now }
 
-	result, err := svc.runScan(context.Background(), *DefaultOAuthSleeperSettings())
+	settings := *DefaultOAuthSleeperSettings()
+	settings.GroupIDs = []int64{1}
+	result, err := svc.runScan(context.Background(), settings)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Scanned)
 	require.Equal(t, 0, result.Triggered)
@@ -240,10 +268,14 @@ func TestOAuthSleeperScanOnceIgnoresDisabledSetting(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	settings := *DefaultOAuthSleeperSettings()
 	settings.Enabled = false
+	settings.GroupIDs = []int64{1}
 	data, err := json.Marshal(settings)
 	require.NoError(t, err)
 
-	repo := &oauthSleeperRepoStub{accounts: []Account{openAISleeperAccount(1, 99, now.Add(time.Hour))}}
+	repo := &oauthSleeperRepoStub{
+		accounts: []Account{openAISleeperAccount(1, 99, now.Add(time.Hour))},
+		groups:   []OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: PlatformOpenAI}},
+	}
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{data: map[string]string{SettingKeyOAuthSleeperSettings: string(data)}})
 	svc.now = func() time.Time { return now }
 
@@ -261,6 +293,7 @@ func TestOAuthSleeperBackgroundLoopSkipsWhenDisabled(t *testing.T) {
 
 	repo := &oauthSleeperRepoStub{
 		accounts: []Account{openAISleeperAccount(1, 99, time.Now().Add(time.Hour))},
+		groups:   []OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: PlatformOpenAI}},
 	}
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{
 		data: map[string]string{SettingKeyOAuthSleeperSettings: string(data)},
@@ -281,13 +314,85 @@ func TestOAuthSleeperAtomicPathDoesNotRecordEventOnEventFailure(t *testing.T) {
 	repo := &oauthSleeperRepoStub{
 		accounts: []Account{openAISleeperAccount(1, 99, now.Add(time.Hour))},
 		eventErr: errors.New("insert failed"),
+		groups:   []OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: PlatformOpenAI}},
 	}
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
 	svc.now = func() time.Time { return now }
 
-	_, err := svc.runScan(context.Background(), *DefaultOAuthSleeperSettings())
+	settings := *DefaultOAuthSleeperSettings()
+	settings.GroupIDs = []int64{1}
+	_, err := svc.runScan(context.Background(), settings)
 	require.Error(t, err)
 	require.Empty(t, repo.events)
+}
+
+func TestOAuthSleeperSetSettingsRequiresGroupsWhenEnabled(t *testing.T) {
+	svc := NewOAuthSleeperService(&oauthSleeperRepoStub{}, &oauthSleeperSettingRepoStub{})
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = nil
+
+	_, err := svc.SetSettings(context.Background(), &settings)
+	require.ErrorIs(t, err, ErrOAuthSleeperInvalidSettings)
+}
+
+func TestOAuthSleeperSetSettingsRejectsDisabledPlatformGroup(t *testing.T) {
+	repo := &oauthSleeperRepoStub{
+		groups: []OAuthSleeperGroup{{ID: 2, Name: "Anthropic", Platform: PlatformAnthropic}},
+	}
+	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.IncludeAnthropic = false
+	settings.GroupIDs = []int64{2}
+
+	_, err := svc.SetSettings(context.Background(), &settings)
+	require.ErrorIs(t, err, ErrOAuthSleeperInvalidSettings)
+}
+
+func TestOAuthSleeperLegacyConfigWithoutGroupsScansNothing(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	repo := &oauthSleeperRepoStub{accounts: []Account{openAISleeperAccount(1, 99, now.Add(time.Hour))}}
+	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = nil
+	result, err := svc.runScan(context.Background(), settings)
+
+	require.NoError(t, err)
+	require.Equal(t, 0, result.Scanned)
+	require.Equal(t, 0, result.Triggered)
+	require.Empty(t, repo.events)
+	require.Zero(t, repo.listCalls)
+}
+
+func TestOAuthSleeperScanCapsPerSelectedGroup(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	repo := &oauthSleeperRepoStub{
+		groups: []OAuthSleeperGroup{
+			{ID: 1, Name: "OpenAI A", Platform: PlatformOpenAI},
+			{ID: 2, Name: "OpenAI B", Platform: PlatformOpenAI},
+		},
+		accounts: []Account{
+			withGroupIDs(openAISleeperAccount(1, 99, now.Add(3*time.Hour)), 1),
+			withGroupIDs(openAISleeperAccount(2, 98, now.Add(2*time.Hour)), 1, 2),
+			withGroupIDs(openAISleeperAccount(3, 97, now.Add(1*time.Hour)), 2),
+		},
+	}
+	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+	settings := *DefaultOAuthSleeperSettings()
+	settings.MaxSleepPerScan = 1
+	settings.IncludeAnthropic = false
+	settings.GroupIDs = []int64{1, 2}
+
+	result, err := svc.runScan(context.Background(), settings)
+	require.NoError(t, err)
+	require.Equal(t, 3, result.Scanned)
+	require.Equal(t, 2, result.Triggered)
+	require.Equal(t, []int64{1, 3}, repo.updates)
 }
 
 func openAISleeperAccount(id int64, utilization float64, resetAt time.Time) Account {
@@ -297,6 +402,7 @@ func openAISleeperAccount(id int64, utilization float64, resetAt time.Time) Acco
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Status:   StatusActive,
+		GroupIDs: []int64{1},
 		Extra: map[string]any{
 			"codex_5h_used_percent": utilization,
 			"codex_5h_reset_at":     resetAt.Format(time.RFC3339),
@@ -311,9 +417,15 @@ func anthropicSleeperAccount(id int64, utilization float64, resetAt time.Time) A
 		Platform:         PlatformAnthropic,
 		Type:             AccountTypeOAuth,
 		Status:           StatusActive,
+		GroupIDs:         []int64{2},
 		SessionWindowEnd: &resetAt,
 		Extra: map[string]any{
 			"session_window_utilization": utilization,
 		},
 	}
+}
+
+func withGroupIDs(account Account, groupIDs ...int64) Account {
+	account.GroupIDs = append([]int64(nil), groupIDs...)
+	return account
 }

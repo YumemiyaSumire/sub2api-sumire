@@ -35,10 +35,11 @@ var ErrOAuthSleeperInvalidSettings = infraerrors.BadRequest("OAUTH_SLEEPER_INVAL
 
 // OAuthSleeperRepository is the narrow persistence surface used by OAuthSleeperService.
 type OAuthSleeperRepository interface {
-	ListOAuthSleeperAccounts(ctx context.Context, platforms []string) ([]Account, error)
+	ListOAuthSleeperAccounts(ctx context.Context, platforms []string, groupIDs []int64) ([]Account, error)
+	ListOAuthSleeperGroups(ctx context.Context, groupIDs []int64) ([]OAuthSleeperGroup, error)
 	CreateOAuthSleeperEventAfterRateLimit(ctx context.Context, event *OAuthSleeperEvent) (bool, error)
 	ListOAuthSleeperEvents(ctx context.Context, params pagination.PaginationParams) ([]OAuthSleeperEvent, *pagination.PaginationResult, error)
-	ListOAuthSleeperSleepingAccounts(ctx context.Context, platforms []string, now time.Time, limit int) ([]OAuthSleeperSleepingAccount, error)
+	ListOAuthSleeperSleepingAccounts(ctx context.Context, platforms []string, groupIDs []int64, now time.Time, limit int) ([]OAuthSleeperSleepingAccount, error)
 }
 
 type OAuthSleeperSettings struct {
@@ -48,6 +49,7 @@ type OAuthSleeperSettings struct {
 	MaxSleepPerScan     int     `json:"max_sleep_per_scan"`
 	IncludeOpenAI       bool    `json:"include_openai"`
 	IncludeAnthropic    bool    `json:"include_anthropic"`
+	GroupIDs            []int64 `json:"group_ids"`
 }
 
 type OAuthSleeperStatus struct {
@@ -57,6 +59,7 @@ type OAuthSleeperStatus struct {
 	MaxSleepPerScan     int                           `json:"max_sleep_per_scan"`
 	IncludeOpenAI       bool                          `json:"include_openai"`
 	IncludeAnthropic    bool                          `json:"include_anthropic"`
+	GroupIDs            []int64                       `json:"group_ids"`
 	LastScanAt          *time.Time                    `json:"last_scan_at,omitempty"`
 	LastScanned         int                           `json:"last_scanned"`
 	LastTriggered       int                           `json:"last_triggered"`
@@ -81,6 +84,12 @@ type OAuthSleeperEvent struct {
 	ResetAt                  time.Time  `json:"reset_at"`
 	PreviousRateLimitResetAt *time.Time `json:"previous_rate_limit_reset_at,omitempty"`
 	CreatedAt                time.Time  `json:"created_at"`
+}
+
+type OAuthSleeperGroup struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
 }
 
 type OAuthSleeperSleepingAccount struct {
@@ -127,6 +136,7 @@ func DefaultOAuthSleeperSettings() *OAuthSleeperSettings {
 		MaxSleepPerScan:     defaultOAuthSleeperMaxSleepPerScan,
 		IncludeOpenAI:       true,
 		IncludeAnthropic:    true,
+		GroupIDs:            []int64{},
 	}
 }
 
@@ -187,10 +197,17 @@ func (s *OAuthSleeperService) SetSettings(ctx context.Context, settings *OAuthSl
 	if s == nil || s.settingRepo == nil {
 		return nil, fmt.Errorf("oauth sleeper service is not initialized")
 	}
-	if err := ValidateOAuthSleeperSettings(settings); err != nil {
-		return nil, err
+	if settings == nil {
+		return nil, ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "settings", "reason": "required"})
 	}
 	normalized := *settings
+	normalizeOAuthSleeperSettingsForRead(&normalized)
+	if err := ValidateOAuthSleeperSettings(&normalized); err != nil {
+		return nil, err
+	}
+	if err := s.validateOAuthSleeperSettingsScope(ctx, normalized); err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(&normalized)
 	if err != nil {
 		return nil, fmt.Errorf("marshal oauth sleeper settings: %w", err)
@@ -225,7 +242,7 @@ func (s *OAuthSleeperService) GetStatus(ctx context.Context) (*OAuthSleeperStatu
 
 	var sleeping []OAuthSleeperSleepingAccount
 	if s != nil && s.repo != nil {
-		sleeping, err = s.repo.ListOAuthSleeperSleepingAccounts(ctx, oauthSleeperPlatforms(*settings), s.now(), oauthSleeperStatusAccountsLimit)
+		sleeping, err = s.repo.ListOAuthSleeperSleepingAccounts(ctx, oauthSleeperPlatforms(*settings), settings.GroupIDs, s.now(), oauthSleeperStatusAccountsLimit)
 		if err != nil {
 			return nil, fmt.Errorf("list oauth sleeper sleeping accounts: %w", err)
 		}
@@ -240,6 +257,7 @@ func (s *OAuthSleeperService) GetStatus(ctx context.Context) (*OAuthSleeperStatu
 		MaxSleepPerScan:     settings.MaxSleepPerScan,
 		IncludeOpenAI:       settings.IncludeOpenAI,
 		IncludeAnthropic:    settings.IncludeAnthropic,
+		GroupIDs:            append([]int64(nil), settings.GroupIDs...),
 		LastScanAt:          lastScanAt,
 		LastScanned:         s.lastScanned,
 		LastTriggered:       s.lastTriggered,
@@ -319,8 +337,21 @@ func (s *OAuthSleeperService) runScan(ctx context.Context, settings OAuthSleeper
 		s.recordScanStatusAt(now, 0, 0, nil)
 		return result, nil
 	}
+	groups, err := s.resolveOAuthSleeperGroups(ctx, settings)
+	if err != nil {
+		s.recordScanStatus(0, 0, err)
+		return nil, fmt.Errorf("resolve oauth sleeper groups: %w", err)
+	}
+	groupIDs := oauthSleeperGroupIDs(groups)
+	if len(groupIDs) == 0 {
+		now := s.now()
+		s.recordScanStatusAt(now, 0, 0, nil)
+		return result, nil
+	}
+	groupIDSet := int64Set(groupIDs)
+	triggeredByGroup := make(map[int64]int, len(groupIDs))
 
-	accounts, err := s.repo.ListOAuthSleeperAccounts(ctx, platforms)
+	accounts, err := s.repo.ListOAuthSleeperAccounts(ctx, platforms, groupIDs)
 	if err != nil {
 		s.recordScanStatus(0, 0, err)
 		return nil, fmt.Errorf("list oauth sleeper accounts: %w", err)
@@ -343,10 +374,10 @@ func (s *OAuthSleeperService) runScan(ctx context.Context, settings OAuthSleeper
 			continue
 		}
 		sortOAuthSleeperCandidates(platformCandidates)
-		triggeredForPlatform := 0
 		for _, candidate := range platformCandidates {
-			if triggeredForPlatform >= settings.MaxSleepPerScan {
-				break
+			candidateGroupIDs := oauthSleeperSelectedAccountGroupIDs(candidate.account.GroupIDs, groupIDSet)
+			if len(candidateGroupIDs) == 0 || oauthSleeperAnyGroupAtLimit(candidateGroupIDs, triggeredByGroup, settings.MaxSleepPerScan) {
+				continue
 			}
 			event := OAuthSleeperEvent{
 				AccountID:          candidate.account.ID,
@@ -366,7 +397,9 @@ func (s *OAuthSleeperService) runScan(ctx context.Context, settings OAuthSleeper
 				continue
 			}
 			result.Triggered++
-			triggeredForPlatform++
+			for _, groupID := range candidateGroupIDs {
+				triggeredByGroup[groupID]++
+			}
 			result.Events = append(result.Events, event)
 		}
 	}
@@ -406,6 +439,133 @@ func normalizeOAuthSleeperSettingsForRead(settings *OAuthSleeperSettings) {
 	if settings.MaxSleepPerScan <= 0 {
 		settings.MaxSleepPerScan = defaultOAuthSleeperMaxSleepPerScan
 	}
+	settings.GroupIDs = normalizeOAuthSleeperGroupIDs(settings.GroupIDs)
+}
+
+func (s *OAuthSleeperService) validateOAuthSleeperSettingsScope(ctx context.Context, settings OAuthSleeperSettings) error {
+	if settings.Enabled && len(settings.GroupIDs) == 0 {
+		return ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "group_ids", "reason": "at least one group is required when enabled"})
+	}
+	if len(settings.GroupIDs) == 0 {
+		return nil
+	}
+	if s == nil || s.repo == nil {
+		return fmt.Errorf("oauth sleeper service is not initialized")
+	}
+	groups, err := s.repo.ListOAuthSleeperGroups(ctx, settings.GroupIDs)
+	if err != nil {
+		return fmt.Errorf("list oauth sleeper groups: %w", err)
+	}
+	byID := make(map[int64]OAuthSleeperGroup, len(groups))
+	for _, group := range groups {
+		byID[group.ID] = group
+	}
+	for _, groupID := range settings.GroupIDs {
+		group, ok := byID[groupID]
+		if !ok {
+			return ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "group_ids", "reason": "group not found or inactive"})
+		}
+		if !oauthSleeperGroupPlatformAllowed(group.Platform, settings) {
+			return ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "group_ids", "reason": "group platform is not enabled for oauth sleeper"})
+		}
+	}
+	return nil
+}
+
+func (s *OAuthSleeperService) resolveOAuthSleeperGroups(ctx context.Context, settings OAuthSleeperSettings) ([]OAuthSleeperGroup, error) {
+	if len(settings.GroupIDs) == 0 {
+		return []OAuthSleeperGroup{}, nil
+	}
+	groups, err := s.repo.ListOAuthSleeperGroups(ctx, settings.GroupIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OAuthSleeperGroup, 0, len(groups))
+	for _, group := range groups {
+		if oauthSleeperGroupPlatformAllowed(group.Platform, settings) {
+			out = append(out, group)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func oauthSleeperGroupPlatformAllowed(platform string, settings OAuthSleeperSettings) bool {
+	switch platform {
+	case PlatformOpenAI:
+		return settings.IncludeOpenAI
+	case PlatformAnthropic:
+		return settings.IncludeAnthropic
+	default:
+		return false
+	}
+}
+
+func normalizeOAuthSleeperGroupIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return []int64{}
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func oauthSleeperGroupIDs(groups []OAuthSleeperGroup) []int64 {
+	ids := make([]int64, 0, len(groups))
+	for _, group := range groups {
+		if group.ID > 0 {
+			ids = append(ids, group.ID)
+		}
+	}
+	return normalizeOAuthSleeperGroupIDs(ids)
+}
+
+func int64Set(ids []int64) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+func oauthSleeperSelectedAccountGroupIDs(accountGroupIDs []int64, selected map[int64]struct{}) []int64 {
+	if len(accountGroupIDs) == 0 || len(selected) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(accountGroupIDs))
+	seen := make(map[int64]struct{}, len(accountGroupIDs))
+	for _, groupID := range accountGroupIDs {
+		if _, ok := selected[groupID]; !ok {
+			continue
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		out = append(out, groupID)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func oauthSleeperAnyGroupAtLimit(groupIDs []int64, triggeredByGroup map[int64]int, limit int) bool {
+	for _, groupID := range groupIDs {
+		if triggeredByGroup[groupID] >= limit {
+			return true
+		}
+	}
+	return false
 }
 
 func oauthSleeperPlatforms(settings OAuthSleeperSettings) []string {

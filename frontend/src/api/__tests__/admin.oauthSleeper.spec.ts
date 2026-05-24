@@ -49,6 +49,7 @@ describe('admin oauthSleeper api', () => {
       max_sleep_per_scan: 2,
       include_openai: true,
       include_anthropic: false,
+      group_ids: [1],
     }
     put.mockResolvedValue({ data: payload })
     post.mockResolvedValue({ data: { scanned: 4, triggered: 1, events: [] } })

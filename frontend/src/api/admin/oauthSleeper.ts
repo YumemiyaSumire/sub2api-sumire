@@ -10,6 +10,7 @@ export interface OAuthSleeperSettings {
   max_sleep_per_scan: number
   include_openai: boolean
   include_anthropic: boolean
+  group_ids: number[]
 }
 
 export interface OAuthSleeperSleepingAccount {

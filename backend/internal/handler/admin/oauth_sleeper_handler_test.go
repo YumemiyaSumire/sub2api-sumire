@@ -18,14 +18,34 @@ import (
 
 type oauthSleeperHandlerRepoStub struct {
 	mu       sync.Mutex
+	groups   []service.OAuthSleeperGroup
 	accounts []service.Account
 	events   []service.OAuthSleeperEvent
 }
 
-func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperAccounts(context.Context, []string) ([]service.Account, error) {
+func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperAccounts(context.Context, []string, []int64) ([]service.Account, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]service.Account(nil), r.accounts...), nil
+}
+
+func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperGroups(_ context.Context, groupIDs []int64) ([]service.OAuthSleeperGroup, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(groupIDs) == 0 {
+		return []service.OAuthSleeperGroup{}, nil
+	}
+	allowed := map[int64]struct{}{}
+	for _, id := range groupIDs {
+		allowed[id] = struct{}{}
+	}
+	groups := make([]service.OAuthSleeperGroup, 0, len(r.groups))
+	for _, group := range r.groups {
+		if _, ok := allowed[group.ID]; ok {
+			groups = append(groups, group)
+		}
+	}
+	return groups, nil
 }
 
 func (r *oauthSleeperHandlerRepoStub) CreateOAuthSleeperEventAfterRateLimit(_ context.Context, event *service.OAuthSleeperEvent) (bool, error) {
@@ -51,7 +71,7 @@ func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperEvents(_ context.Context, 
 	}, nil
 }
 
-func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperSleepingAccounts(context.Context, []string, time.Time, int) ([]service.OAuthSleeperSleepingAccount, error) {
+func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperSleepingAccounts(context.Context, []string, []int64, time.Time, int) ([]service.OAuthSleeperSleepingAccount, error) {
 	return []service.OAuthSleeperSleepingAccount{
 		{
 			AccountID:        9,
@@ -136,7 +156,9 @@ func setupOAuthSleeperHandlerRouter(repo *oauthSleeperHandlerRepoStub, settingRe
 }
 
 func TestOAuthSleeperHandlerSettingsDefaultAndUpdate(t *testing.T) {
-	repo := &oauthSleeperHandlerRepoStub{}
+	repo := &oauthSleeperHandlerRepoStub{
+		groups: []service.OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: service.PlatformOpenAI}},
+	}
 	settingRepo := &oauthSleeperHandlerSettingRepoStub{}
 	router := setupOAuthSleeperHandlerRouter(repo, settingRepo)
 
@@ -161,6 +183,7 @@ func TestOAuthSleeperHandlerSettingsDefaultAndUpdate(t *testing.T) {
 		MaxSleepPerScan:     5,
 		IncludeOpenAI:       true,
 		IncludeAnthropic:    false,
+		GroupIDs:            []int64{1},
 	}
 	raw, err := json.Marshal(payload)
 	require.NoError(t, err)
@@ -198,8 +221,9 @@ func TestOAuthSleeperHandlerRejectsInvalidSettings(t *testing.T) {
 }
 
 func TestOAuthSleeperHandlerScanOnceAndEvents(t *testing.T) {
-	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	resetAt := time.Now().UTC().Add(time.Hour)
 	repo := &oauthSleeperHandlerRepoStub{
+		groups: []service.OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: service.PlatformOpenAI}},
 		accounts: []service.Account{
 			{
 				ID:       7,
@@ -207,14 +231,28 @@ func TestOAuthSleeperHandlerScanOnceAndEvents(t *testing.T) {
 				Platform: service.PlatformOpenAI,
 				Type:     service.AccountTypeOAuth,
 				Status:   service.StatusActive,
+				GroupIDs: []int64{1},
 				Extra: map[string]any{
 					"codex_5h_used_percent": 99.0,
-					"codex_5h_reset_at":     now.Add(time.Hour).Format(time.RFC3339),
+					"codex_5h_reset_at":     resetAt.Format(time.RFC3339),
 				},
 			},
 		},
 	}
-	router := setupOAuthSleeperHandlerRouter(repo, &oauthSleeperHandlerSettingRepoStub{})
+	settings := service.OAuthSleeperSettings{
+		Enabled:             true,
+		ThresholdPercent:    95,
+		ScanIntervalSeconds: 300,
+		MaxSleepPerScan:     3,
+		IncludeOpenAI:       true,
+		IncludeAnthropic:    true,
+		GroupIDs:            []int64{1},
+	}
+	rawSettings, err := json.Marshal(settings)
+	require.NoError(t, err)
+	router := setupOAuthSleeperHandlerRouter(repo, &oauthSleeperHandlerSettingRepoStub{
+		data: map[string]string{service.SettingKeyOAuthSleeperSettings: string(rawSettings)},
+	})
 
 	scanReq := httptest.NewRequest(http.MethodPost, "/admin/oauth-sleeper/scan-once", nil)
 	scanRec := httptest.NewRecorder()

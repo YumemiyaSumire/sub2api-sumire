@@ -13,6 +13,7 @@ const {
   updateSettings,
   scanOnce,
   listEvents,
+  getAllGroups,
   showError,
   showSuccess,
 } = vi.hoisted(() => ({
@@ -21,6 +22,7 @@ const {
   updateSettings: vi.fn(),
   scanOnce: vi.fn(),
   listEvents: vi.fn(),
+  getAllGroups: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
 }))
@@ -33,6 +35,9 @@ vi.mock('@/api/admin', () => ({
       updateSettings,
       scanOnce,
       listEvents,
+    },
+    groups: {
+      getAll: getAllGroups,
     },
   },
 }))
@@ -74,6 +79,7 @@ const baseSettings = (): OAuthSleeperSettings => ({
   max_sleep_per_scan: 3,
   include_openai: true,
   include_anthropic: true,
+  group_ids: [1],
 })
 
 const baseStatus = (): OAuthSleeperStatus => ({
@@ -109,11 +115,21 @@ describe('admin OAuthSleeperView', () => {
     updateSettings.mockReset()
     scanOnce.mockReset()
     listEvents.mockReset()
+    getAllGroups.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
 
     getSettings.mockResolvedValue(baseSettings())
     getStatus.mockResolvedValue(baseStatus())
+    getAllGroups.mockImplementation(async (platform?: string) => {
+      if (platform === 'openai') {
+        return [{ id: 1, name: 'OpenAI group', platform: 'openai', rate_multiplier: 1, account_count: 2 }]
+      }
+      if (platform === 'anthropic') {
+        return [{ id: 2, name: 'Claude group', platform: 'anthropic', rate_multiplier: 1, account_count: 1 }]
+      }
+      return []
+    })
     listEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     updateSettings.mockImplementation(async (payload: OAuthSleeperSettings) => payload)
     scanOnce.mockResolvedValue({ scanned: 2, triggered: 1, events: [] })
@@ -125,7 +141,10 @@ describe('admin OAuthSleeperView', () => {
 
     expect(getSettings).toHaveBeenCalledTimes(1)
     expect(getStatus).toHaveBeenCalledTimes(1)
+    expect(getAllGroups).toHaveBeenCalledWith('openai')
+    expect(getAllGroups).toHaveBeenCalledWith('anthropic')
     expect(listEvents).toHaveBeenCalledWith({ page: 1, page_size: 20 })
+    expect(wrapper.text()).toContain('OpenAI group')
     expect(wrapper.text()).toContain('admin.oauthSleeper.noEvents')
     expect(wrapper.text()).toContain('admin.oauthSleeper.noSleepingAccounts')
   })
@@ -149,6 +168,7 @@ describe('admin OAuthSleeperView', () => {
       max_sleep_per_scan: 2,
       include_openai: true,
       include_anthropic: true,
+      group_ids: [1],
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.oauthSleeper.saved')
   })
@@ -181,5 +201,23 @@ describe('admin OAuthSleeperView', () => {
 
     expect(updateSettings).not.toHaveBeenCalled()
     expect(showError).toHaveBeenCalledWith('admin.oauthSleeper.platformRequired')
+  })
+
+  it('shows an error when enabling with no group selected', async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettings(), enabled: false, group_ids: [] })
+    getStatus.mockResolvedValueOnce({ ...baseStatus(), enabled: false, group_ids: [] })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.findAll('button[role="switch"]')[0].trigger('click')
+    const groupCheckbox = wrapper.find('input[type="checkbox"][value="1"]')
+    if (groupCheckbox.exists()) {
+      await groupCheckbox.setValue(false)
+    }
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.oauthSleeper.groupRequired')
   })
 })

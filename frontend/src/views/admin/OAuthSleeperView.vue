@@ -139,6 +139,15 @@
                 </div>
               </div>
 
+              <div>
+                <GroupSelector
+                  v-model="settingsForm.group_ids"
+                  :groups="oauthSleeperGroups"
+                  searchable
+                />
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.groupScopeHint') }}</span>
+              </div>
+
               <div class="flex justify-end gap-2 border-t border-gray-100 pt-5 dark:border-dark-700">
                 <button type="button" class="btn btn-secondary" :disabled="saving" @click="resetForm">
                   {{ t('common.reset') }}
@@ -276,6 +285,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
+import type { AdminGroup } from '@/types'
 import type {
   OAuthSleeperEvent,
   OAuthSleeperScanResult,
@@ -291,6 +301,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import GroupSelector from '@/components/common/GroupSelector.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -302,6 +313,7 @@ const defaultSettings: OAuthSleeperSettings = {
   max_sleep_per_scan: 3,
   include_openai: true,
   include_anthropic: true,
+  group_ids: [],
 }
 
 const loading = ref(false)
@@ -312,6 +324,7 @@ const status = ref<OAuthSleeperStatus | null>(null)
 const savedSettings = ref<OAuthSleeperSettings>({ ...defaultSettings })
 const settingsForm = reactive<OAuthSleeperSettings>({ ...defaultSettings })
 const events = ref<OAuthSleeperEvent[]>([])
+const groups = ref<AdminGroup[]>([])
 const lastScanResult = ref<OAuthSleeperScanResult | null>(null)
 const pagination = reactive({
   page: 1,
@@ -329,7 +342,7 @@ const overviewItems = computed(() => [
     badgeClass: status.value?.enabled
       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
       : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300',
-    meta: enabledPlatformText.value,
+    meta: groupScopeText.value,
     icon: 'shield' as const,
     iconClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300',
   },
@@ -356,22 +369,38 @@ const overviewItems = computed(() => [
     key: 'sleeping',
     label: t('admin.oauthSleeper.overview.sleeping'),
     value: String(status.value?.sleeping_accounts?.length ?? 0),
-    meta: t('admin.oauthSleeper.maxPerPlatformMeta', { count: status.value?.max_sleep_per_scan ?? settingsForm.max_sleep_per_scan }),
+    meta: t('admin.oauthSleeper.maxPerGroupMeta', { count: status.value?.max_sleep_per_scan ?? settingsForm.max_sleep_per_scan }),
     icon: 'ban' as const,
     iconClass: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300',
   },
 ])
 
-const enabledPlatformText = computed(() => {
-  const platforms: string[] = []
-  if (status.value?.include_openai ?? settingsForm.include_openai) platforms.push('OpenAI')
-  if (status.value?.include_anthropic ?? settingsForm.include_anthropic) platforms.push('Anthropic')
-  return platforms.length > 0 ? platforms.join(' / ') : t('admin.oauthSleeper.noPlatformEnabled')
+const oauthSleeperGroups = computed(() =>
+  groups.value.filter((group) => {
+    if (group.platform === 'openai') return settingsForm.include_openai
+    if (group.platform === 'anthropic') return settingsForm.include_anthropic
+    return false
+  })
+)
+
+const selectedGroupNames = computed(() => {
+  const namesByID = new Map(groups.value.map((group) => [group.id, group.name]))
+  return (status.value?.group_ids ?? settingsForm.group_ids)
+    .map((groupID) => namesByID.get(groupID))
+    .filter((name): name is string => Boolean(name))
+})
+
+const groupScopeText = computed(() => {
+  const names = selectedGroupNames.value
+  if (names.length === 0) return t('admin.oauthSleeper.noGroupSelected')
+  if (names.length <= 2) return names.join(' / ')
+  return t('admin.oauthSleeper.groupScopeMeta', { count: names.length, names: names.slice(0, 2).join(' / ') })
 })
 
 function applySettings(settings: OAuthSleeperSettings) {
-  savedSettings.value = { ...settings }
-  Object.assign(settingsForm, settings)
+  const normalized = { ...defaultSettings, ...settings, group_ids: [...(settings.group_ids ?? [])] }
+  savedSettings.value = normalized
+  Object.assign(settingsForm, normalized)
 }
 
 function resetForm() {
@@ -386,7 +415,16 @@ function buildSettingsPayload(): OAuthSleeperSettings {
     max_sleep_per_scan: Number(settingsForm.max_sleep_per_scan),
     include_openai: settingsForm.include_openai,
     include_anthropic: settingsForm.include_anthropic,
+    group_ids: [...settingsForm.group_ids],
   }
+}
+
+async function loadGroups() {
+  const [openaiGroups, anthropicGroups] = await Promise.all([
+    adminAPI.groups.getAll('openai'),
+    adminAPI.groups.getAll('anthropic'),
+  ])
+  groups.value = [...openaiGroups, ...anthropicGroups]
 }
 
 async function loadStatus() {
@@ -401,7 +439,7 @@ async function loadSettings() {
 async function loadInitial() {
   loading.value = true
   try {
-    await Promise.all([loadSettings(), loadStatus(), loadEvents()])
+    await Promise.all([loadGroups(), loadSettings(), loadStatus(), loadEvents()])
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('admin.oauthSleeper.loadFailed')))
   } finally {
@@ -421,6 +459,10 @@ async function saveSettings() {
   const payload = buildSettingsPayload()
   if (!payload.include_openai && !payload.include_anthropic) {
     appStore.showError(t('admin.oauthSleeper.platformRequired'))
+    return
+  }
+  if (payload.enabled && payload.group_ids.length === 0) {
+    appStore.showError(t('admin.oauthSleeper.groupRequired'))
     return
   }
 

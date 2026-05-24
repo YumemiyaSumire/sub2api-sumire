@@ -63,6 +63,7 @@ export default defineConfig(({ mode }) => {
   build: {
     outDir: '../backend/internal/web/dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         /**
