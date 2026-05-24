@@ -2,7 +2,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
-import i18n, { initI18n } from './i18n'
+import i18n, { initI18n, setLocaleChangeHook } from './i18n'
+import { resolveDocumentTitle } from './router/title'
 import { useAppStore } from '@/stores/app'
 import './style.css'
 
@@ -26,6 +27,10 @@ async function bootstrap() {
   // This must happen after pinia is installed but before router and i18n
   const appStore = useAppStore()
   appStore.initFromInjectedConfig()
+  setLocaleChangeHook(() => {
+    const route = router.currentRoute.value
+    document.title = resolveDocumentTitle(route.meta.title, appStore.siteName, route.meta.titleKey as string)
+  })
 
   // Set document title immediately after config is loaded
   if (appStore.siteName && appStore.siteName !== 'Sub2API') {

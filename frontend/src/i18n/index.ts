@@ -1,7 +1,4 @@
 import { createI18n } from 'vue-i18n'
-import router from '@/router'
-import { resolveDocumentTitle } from '@/router/title'
-import { useAppStore } from '@/stores/app'
 
 type LocaleCode = 'en' | 'zh'
 
@@ -44,6 +41,11 @@ export const i18n = createI18n({
 })
 
 const loadedLocales = new Set<LocaleCode>()
+let localeChangeHook: (() => void) | null = null
+
+export function setLocaleChangeHook(hook: (() => void) | null): void {
+  localeChangeHook = hook
+}
 
 export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
   if (loadedLocales.has(locale)) {
@@ -73,9 +75,7 @@ export async function setLocale(locale: string): Promise<void> {
   document.documentElement.setAttribute('lang', locale)
 
   // 同步更新浏览器页签标题，使其跟随语言切换
-  const route = router.currentRoute.value
-  const appStore = useAppStore()
-  document.title = resolveDocumentTitle(route.meta.title, appStore.siteName, route.meta.titleKey as string)
+  localeChangeHook?.()
 }
 
 export function getLocale(): LocaleCode {
