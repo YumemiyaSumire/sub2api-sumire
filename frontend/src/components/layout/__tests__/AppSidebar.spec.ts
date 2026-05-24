@@ -30,3 +30,11 @@ describe('AppSidebar header styles', () => {
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
   })
 })
+
+describe('AppSidebar admin navigation', () => {
+  it('keeps hidden admin-only tools out of the sidebar', () => {
+    expect(componentSource).not.toContain("path: '/admin/announcements'")
+    expect(componentSource).not.toContain("path: '/admin/proxies'")
+    expect(componentSource).not.toContain("path: '/admin/promo-codes'")
+  })
+})
