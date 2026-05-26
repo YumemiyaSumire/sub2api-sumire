@@ -545,13 +545,15 @@ interface RingItem {
   resetAt?: string | null
 }
 
+type AnimationFrameCallback = (timestamp: number) => void
+
 function getRingOffset(ring: RingItem): number {
   if (!ringAnimated.value) return CIRCUMFERENCE
   if (ring.isBalance) return 0
   return CIRCUMFERENCE - (Math.min(ring.pct, 100) / 100) * CIRCUMFERENCE
 }
 
-function scheduleAnimationFrame(callback: FrameRequestCallback): void {
+function scheduleAnimationFrame(callback: AnimationFrameCallback): void {
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(callback)
     return
