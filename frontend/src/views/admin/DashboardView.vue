@@ -603,6 +603,7 @@ const formatCost = (value: number | null | undefined): string => {
   }
   return safeValue.toFixed(4)
 }
+}
 
 const formatDuration = (ms: number): string => {
   if (ms >= 1000) {

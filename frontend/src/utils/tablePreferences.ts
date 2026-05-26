@@ -53,6 +53,10 @@ export const getConfiguredTableDefaultPageSize = (): number => {
   return configured
 }
 
+export const hasConfiguredTableDefaultPageSize = (): boolean => {
+  return sanitizePageSize(getInjectedAppConfig()?.table_default_page_size) !== null
+}
+
 export const getConfiguredTablePageSizeOptions = (): number[] => {
   const unique = getSanitizedConfiguredOptions()
   if (unique.length === 0) {

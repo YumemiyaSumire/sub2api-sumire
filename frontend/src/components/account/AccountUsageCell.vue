@@ -1222,14 +1222,14 @@ const flushPendingAutoLoad = () => {
   })
 }
 
-const requestAutoLoad = (source?: 'passive' | 'active') => {
+const requestAutoLoad = (source?: 'passive' | 'active', options?: { bypassCache?: boolean }) => {
   if (!shouldFetchUsage.value) return
   if (shouldLazyLoadOnMobile.value && !hasEnteredViewport.value) {
     pendingAutoLoad.value = true
     pendingAutoLoadSource.value = source
     return
   }
-  loadUsage({ source }).catch((e) => {
+  loadUsage({ source, bypassCache: options?.bypassCache }).catch((e) => {
     console.error('Failed to auto load usage:', e)
   })
 }
@@ -1384,7 +1384,7 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
 
   _usageCache.delete(props.account.id)
-  requestAutoLoad()
+  requestAutoLoad(undefined, { bypassCache: true })
 })
 
 watch(
