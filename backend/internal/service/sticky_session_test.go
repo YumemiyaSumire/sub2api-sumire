@@ -122,8 +122,8 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "overloaded account",
 			account: &Account{
-				Status:       StatusActive,
-				Schedulable:  true,
+				Status:        StatusActive,
+				Schedulable:   true,
 				OverloadUntil: &future,
 			},
 			requestedModel: "",
@@ -146,4 +146,68 @@ func TestShouldClearStickySession(t *testing.T) {
 			require.Equal(t, tt.want, shouldClearStickySession(tt.account, tt.requestedModel))
 		})
 	}
+}
+
+func TestOAuthSleeperStickyGrace(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(10 * time.Minute)
+	graceUntil := now.Add(60 * time.Second)
+
+	account := &Account{
+		Status:           StatusActive,
+		Schedulable:      true,
+		Type:             AccountTypeOAuth,
+		RateLimitResetAt: &resetAt,
+		Extra: map[string]any{
+			OAuthSleeperExtraSleepKey:       true,
+			OAuthSleeperExtraStickyGraceKey: graceUntil.Format(time.RFC3339Nano),
+			OAuthSleeperExtraResetAtKey:     resetAt.Format(time.RFC3339Nano),
+		},
+	}
+
+	require.False(t, shouldClearStickySessionAt(account, "", now.Add(30*time.Second)))
+	require.True(t, shouldClearStickySessionAt(account, "", now.Add(61*time.Second)))
+}
+
+func TestOAuthSleeperStickyGraceDoesNotCoverRealRateLimitExtension(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	oauthSleeperResetAt := now.Add(10 * time.Minute)
+	realResetAt := now.Add(30 * time.Minute)
+	graceUntil := now.Add(60 * time.Second)
+
+	account := &Account{
+		Status:           StatusActive,
+		Schedulable:      true,
+		Type:             AccountTypeOAuth,
+		RateLimitResetAt: &realResetAt,
+		Extra: map[string]any{
+			OAuthSleeperExtraSleepKey:       true,
+			OAuthSleeperExtraStickyGraceKey: graceUntil.Format(time.RFC3339Nano),
+			OAuthSleeperExtraResetAtKey:     oauthSleeperResetAt.Format(time.RFC3339Nano),
+		},
+	}
+
+	require.True(t, shouldClearStickySessionAt(account, "", now.Add(30*time.Second)))
+}
+
+func TestOAuthSleeperStickyGraceDoesNotCoverOtherUnschedulableStates(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(10 * time.Minute)
+	graceUntil := now.Add(60 * time.Second)
+	overloadUntil := now.Add(2 * time.Minute)
+
+	account := &Account{
+		Status:           StatusActive,
+		Schedulable:      true,
+		Type:             AccountTypeOAuth,
+		RateLimitResetAt: &resetAt,
+		OverloadUntil:    &overloadUntil,
+		Extra: map[string]any{
+			OAuthSleeperExtraSleepKey:       true,
+			OAuthSleeperExtraStickyGraceKey: graceUntil.Format(time.RFC3339Nano),
+			OAuthSleeperExtraResetAtKey:     resetAt.Format(time.RFC3339Nano),
+		},
+	}
+
+	require.True(t, shouldClearStickySessionAt(account, "", now.Add(30*time.Second)))
 }

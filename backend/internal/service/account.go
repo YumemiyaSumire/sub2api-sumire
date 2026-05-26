@@ -150,6 +150,22 @@ func (a *Account) IsOverloaded() bool {
 	return time.Now().Before(*a.OverloadUntil)
 }
 
+func (a *Account) IsOAuthSleeperStickyGraceActive(now time.Time) bool {
+	if a == nil || a.Extra == nil || a.RateLimitResetAt == nil || !now.Before(*a.RateLimitResetAt) {
+		return false
+	}
+	sleep, _ := a.Extra[OAuthSleeperExtraSleepKey].(bool)
+	if !sleep {
+		return false
+	}
+	resetAt, ok := parseAccountExtraTime(a.Extra[OAuthSleeperExtraResetAtKey])
+	if !ok || resetAt.Before(*a.RateLimitResetAt) {
+		return false
+	}
+	graceUntil, ok := parseAccountExtraTime(a.Extra[OAuthSleeperExtraStickyGraceKey])
+	return ok && now.Before(graceUntil)
+}
+
 func (a *Account) IsOAuth() bool {
 	return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken
 }
@@ -400,6 +416,46 @@ func parseTempUnschedInt(value any) int {
 		}
 	}
 	return 0
+}
+
+func parseAccountExtraTime(value any) (time.Time, bool) {
+	switch v := value.(type) {
+	case time.Time:
+		if v.IsZero() {
+			return time.Time{}, false
+		}
+		return v.UTC(), true
+	case string:
+		raw := strings.TrimSpace(v)
+		if raw == "" {
+			return time.Time{}, false
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+			if parsed, err := time.Parse(layout, raw); err == nil {
+				return parsed.UTC(), true
+			}
+		}
+		if unix, err := strconv.ParseInt(raw, 10, 64); err == nil && unix > 0 {
+			return time.Unix(unix, 0).UTC(), true
+		}
+	case json.Number:
+		if unix, err := v.Int64(); err == nil && unix > 0 {
+			return time.Unix(unix, 0).UTC(), true
+		}
+	case int64:
+		if v > 0 {
+			return time.Unix(v, 0).UTC(), true
+		}
+	case int:
+		if v > 0 {
+			return time.Unix(int64(v), 0).UTC(), true
+		}
+	case float64:
+		if v > 0 {
+			return time.Unix(int64(v), 0).UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 const (

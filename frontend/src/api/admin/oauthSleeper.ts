@@ -22,6 +22,9 @@ export interface OAuthSleeperSleepingAccount {
 }
 
 export interface OAuthSleeperStatus extends OAuthSleeperSettings {
+  effective_scan_interval_seconds: number
+  accelerated_until?: string
+  accelerated_group_ids: number[]
   last_scan_at?: string
   last_scanned: number
   last_triggered: number

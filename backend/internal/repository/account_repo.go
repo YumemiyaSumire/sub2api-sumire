@@ -1120,8 +1120,29 @@ func (r *accountRepository) SetRateLimitedIfLater(ctx context.Context, id int64,
 }
 
 func (r *accountRepository) setRateLimitedIfLaterWithExec(ctx context.Context, exec sqlExecutor, id int64, resetAt time.Time) (bool, *time.Time, error) {
+	return r.setRateLimitedIfLaterWithExecAndExtra(ctx, exec, id, resetAt, nil)
+}
+
+func (r *accountRepository) setOAuthSleeperRateLimitedIfLaterWithExec(ctx context.Context, exec sqlExecutor, id int64, resetAt time.Time, now time.Time) (bool, *time.Time, error) {
+	extra := map[string]any{
+		service.OAuthSleeperExtraSleepKey:       true,
+		service.OAuthSleeperExtraStickyGraceKey: now.UTC().Add(service.OAuthSleeperStickyGraceDuration).Format(time.RFC3339Nano),
+		service.OAuthSleeperExtraResetAtKey:     resetAt.UTC().Format(time.RFC3339Nano),
+	}
+	return r.setRateLimitedIfLaterWithExecAndExtra(ctx, exec, id, resetAt, extra)
+}
+
+func (r *accountRepository) setRateLimitedIfLaterWithExecAndExtra(ctx context.Context, exec sqlExecutor, id int64, resetAt time.Time, extra map[string]any) (bool, *time.Time, error) {
 	if exec == nil {
 		return false, nil, errors.New("nil sql executor")
+	}
+	extraJSON := "{}"
+	if len(extra) > 0 {
+		payload, err := json.Marshal(extra)
+		if err != nil {
+			return false, nil, err
+		}
+		extraJSON = string(payload)
 	}
 	rows, err := exec.QueryContext(ctx, `
 		WITH target AS (
@@ -1136,13 +1157,14 @@ func (r *accountRepository) setRateLimitedIfLaterWithExec(ctx context.Context, e
 		UPDATE accounts
 		SET rate_limited_at = NOW(),
 			rate_limit_reset_at = $1,
+			extra = COALESCE(accounts.extra, '{}'::jsonb) || $3::jsonb,
 			updated_at = NOW()
 			FROM target
 			WHERE accounts.id = target.id
 			RETURNING target.previous_rate_limit_reset_at
 		)
 		SELECT previous_rate_limit_reset_at FROM updated
-	`, resetAt, id)
+	`, resetAt, id, extraJSON)
 	if err != nil {
 		return false, nil, err
 	}
@@ -1190,7 +1212,7 @@ func (r *accountRepository) CreateOAuthSleeperEventAfterRateLimit(ctx context.Co
 		}
 	}()
 
-	updated, previous, err := r.setRateLimitedIfLaterWithExec(ctx, tx, event.AccountID, event.ResetAt)
+	updated, previous, err := r.setOAuthSleeperRateLimitedIfLaterWithExec(ctx, tx, event.AccountID, event.ResetAt, time.Now().UTC())
 	if err != nil || !updated {
 		return updated, err
 	}

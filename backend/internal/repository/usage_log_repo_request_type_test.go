@@ -199,8 +199,9 @@ func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *test
 	require.Contains(t, query, "INSERT INTO usage_logs (")
 	require.Contains(t, query, "\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,")
 	require.Contains(t, query, "\n\t\t\trequest_id,\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,")
-	require.Len(t, args, len(prepared.args))
-	require.Equal(t, prepared.args[5], args[5])
+	require.Len(t, args, len(prepared.args)+1)
+	require.Equal(t, 0, args[0])
+	require.Equal(t, prepared.args[5], args[6])
 }
 
 func TestExecUsageLogInsertNoResult_PersistsRequestedModel(t *testing.T) {
@@ -215,9 +216,9 @@ func TestExecUsageLogInsertNoResult_PersistsRequestedModel(t *testing.T) {
 		CreatedAt:      time.Date(2025, 1, 4, 12, 0, 0, 0, time.UTC),
 	})
 
-	mock.ExpectExec("INSERT INTO usage_logs").
+	mock.ExpectQuery("INSERT INTO usage_logs").
 		WithArgs(anySliceToDriverValues(prepared.args)...).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(100)))
 
 	err := execUsageLogInsertNoResult(context.Background(), db, prepared)
 	require.NoError(t, err)

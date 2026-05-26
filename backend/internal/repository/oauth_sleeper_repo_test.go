@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -15,6 +17,43 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 )
+
+type oauthSleeperExtraArgMatcher struct {
+	resetAt time.Time
+}
+
+func (m oauthSleeperExtraArgMatcher) Match(v driver.Value) bool {
+	var raw []byte
+	switch value := v.(type) {
+	case string:
+		raw = []byte(value)
+	case []byte:
+		raw = value
+	default:
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	if payload[service.OAuthSleeperExtraSleepKey] != true {
+		return false
+	}
+	resetRaw, ok := payload[service.OAuthSleeperExtraResetAtKey].(string)
+	if !ok {
+		return false
+	}
+	resetAt, err := time.Parse(time.RFC3339Nano, resetRaw)
+	if err != nil || !resetAt.Equal(m.resetAt) {
+		return false
+	}
+	graceRaw, ok := payload[service.OAuthSleeperExtraStickyGraceKey].(string)
+	if !ok {
+		return false
+	}
+	_, err = time.Parse(time.RFC3339Nano, graceRaw)
+	return err == nil
+}
 
 func newOAuthSleeperAccountRepoSQLMock(t *testing.T) (*accountRepository, sqlmock.Sqlmock) {
 	t.Helper()
@@ -36,7 +75,7 @@ func TestOAuthSleeperRepositorySetRateLimitedIfLaterUpdatesAndEnqueuesOutbox(t *
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("WITH target AS").
-		WithArgs(resetAt, id).
+		WithArgs(resetAt, id, "{}").
 		WillReturnRows(sqlmock.NewRows([]string{"previous_rate_limit_reset_at"}).AddRow(previous))
 	mock.ExpectExec("INSERT INTO scheduler_outbox").
 		WithArgs(service.SchedulerOutboxEventAccountChanged, id, nil, nil, schedulerOutboxDedupWindow.Seconds()).
@@ -51,6 +90,51 @@ func TestOAuthSleeperRepositorySetRateLimitedIfLaterUpdatesAndEnqueuesOutbox(t *
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOAuthSleeperRepositoryCreateEventAfterRateLimitWritesExtraMarkers(t *testing.T) {
+	repo, mock := newOAuthSleeperAccountRepoSQLMock(t)
+	ctx := context.Background()
+	resetAt := time.Date(2026, 5, 24, 15, 0, 0, 0, time.UTC)
+
+	event := &service.OAuthSleeperEvent{
+		AccountID:          7,
+		AccountName:        "oauth-openai",
+		Platform:           service.PlatformOpenAI,
+		Window:             "codex_7d",
+		UtilizationPercent: 99.5,
+		ThresholdPercent:   95,
+		ResetAt:            resetAt,
+		CreatedAt:          resetAt.Add(-2 * time.Hour),
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("WITH target AS").
+		WithArgs(resetAt, event.AccountID, oauthSleeperExtraArgMatcher{resetAt: resetAt}).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_rate_limit_reset_at"}).AddRow(nil)).
+		WillDelayFor(0)
+	mock.ExpectQuery("INSERT INTO oauth_sleeper_events").
+		WithArgs(
+			event.AccountID,
+			event.AccountName,
+			event.Platform,
+			event.Window,
+			event.UtilizationPercent,
+			event.ThresholdPercent,
+			event.ResetAt,
+			nil,
+			event.CreatedAt,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(101), event.CreatedAt))
+	mock.ExpectExec("INSERT INTO scheduler_outbox").
+		WithArgs(service.SchedulerOutboxEventAccountChanged, event.AccountID, nil, nil, schedulerOutboxDedupWindow.Seconds()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	updated, err := repo.CreateOAuthSleeperEventAfterRateLimit(ctx, event)
+	require.NoError(t, err)
+	require.True(t, updated)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOAuthSleeperRepositorySetRateLimitedIfLaterRollsBackWhenNoUpdate(t *testing.T) {
 	repo, mock := newOAuthSleeperAccountRepoSQLMock(t)
 	ctx := context.Background()
@@ -59,7 +143,7 @@ func TestOAuthSleeperRepositorySetRateLimitedIfLaterRollsBackWhenNoUpdate(t *tes
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("WITH target AS").
-		WithArgs(resetAt, id).
+		WithArgs(resetAt, id, "{}").
 		WillReturnRows(sqlmock.NewRows([]string{"previous_rate_limit_reset_at"}))
 	mock.ExpectRollback()
 
@@ -90,7 +174,7 @@ func TestOAuthSleeperRepositoryCreateEventAfterRateLimitCommitsAtomicPath(t *tes
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("WITH target AS").
-		WithArgs(resetAt, event.AccountID).
+		WithArgs(resetAt, event.AccountID, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"previous_rate_limit_reset_at"}).AddRow(previous))
 	mock.ExpectQuery("INSERT INTO oauth_sleeper_events").
 		WithArgs(
@@ -137,7 +221,7 @@ func TestOAuthSleeperRepositoryCreateEventAfterRateLimitRollsBackOnEventFailure(
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("WITH target AS").
-		WithArgs(resetAt, event.AccountID).
+		WithArgs(resetAt, event.AccountID, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"previous_rate_limit_reset_at"}).AddRow(nil))
 	mock.ExpectQuery("INSERT INTO oauth_sleeper_events").
 		WillReturnError(sql.ErrConnDone)

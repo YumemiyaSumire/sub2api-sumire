@@ -29,6 +29,17 @@ const (
 	oauthSleeperMaxSleepPerScan       = 100
 
 	oauthSleeperStatusAccountsLimit = 20
+
+	oauthSleeperAccelerationWindow        = 3 * time.Minute
+	oauthSleeperAccelerationTriggerCount  = 3
+	oauthSleeperAccelerationThresholdCost = 0.01
+	oauthSleeperAccelerationDuration      = 10 * time.Minute
+	oauthSleeperAccelerationInterval      = 10 * time.Second
+
+	OAuthSleeperExtraSleepKey       = "oauth_sleeper_sleep"
+	OAuthSleeperExtraStickyGraceKey = "oauth_sleeper_sticky_grace_until"
+	OAuthSleeperExtraResetAtKey     = "oauth_sleeper_reset_at"
+	OAuthSleeperStickyGraceDuration = 60 * time.Second
 )
 
 var ErrOAuthSleeperInvalidSettings = infraerrors.BadRequest("OAUTH_SLEEPER_INVALID_SETTINGS", "invalid oauth sleeper settings")
@@ -53,18 +64,21 @@ type OAuthSleeperSettings struct {
 }
 
 type OAuthSleeperStatus struct {
-	Enabled             bool                          `json:"enabled"`
-	ThresholdPercent    float64                       `json:"threshold_percent"`
-	ScanIntervalSeconds int                           `json:"scan_interval_seconds"`
-	MaxSleepPerScan     int                           `json:"max_sleep_per_scan"`
-	IncludeOpenAI       bool                          `json:"include_openai"`
-	IncludeAnthropic    bool                          `json:"include_anthropic"`
-	GroupIDs            []int64                       `json:"group_ids"`
-	LastScanAt          *time.Time                    `json:"last_scan_at,omitempty"`
-	LastScanned         int                           `json:"last_scanned"`
-	LastTriggered       int                           `json:"last_triggered"`
-	LastError           string                        `json:"last_error,omitempty"`
-	SleepingAccounts    []OAuthSleeperSleepingAccount `json:"sleeping_accounts"`
+	Enabled                      bool                          `json:"enabled"`
+	ThresholdPercent             float64                       `json:"threshold_percent"`
+	ScanIntervalSeconds          int                           `json:"scan_interval_seconds"`
+	EffectiveScanIntervalSeconds int                           `json:"effective_scan_interval_seconds"`
+	MaxSleepPerScan              int                           `json:"max_sleep_per_scan"`
+	IncludeOpenAI                bool                          `json:"include_openai"`
+	IncludeAnthropic             bool                          `json:"include_anthropic"`
+	GroupIDs                     []int64                       `json:"group_ids"`
+	AcceleratedUntil             *time.Time                    `json:"accelerated_until,omitempty"`
+	AcceleratedGroupIDs          []int64                       `json:"accelerated_group_ids"`
+	LastScanAt                   *time.Time                    `json:"last_scan_at,omitempty"`
+	LastScanned                  int                           `json:"last_scanned"`
+	LastTriggered                int                           `json:"last_triggered"`
+	LastError                    string                        `json:"last_error,omitempty"`
+	SleepingAccounts             []OAuthSleeperSleepingAccount `json:"sleeping_accounts"`
 }
 
 type OAuthSleeperScanResult struct {
@@ -118,6 +132,10 @@ type OAuthSleeperService struct {
 	lastScanned   int
 	lastTriggered int
 	lastError     string
+
+	accelerationMu   sync.Mutex
+	cacheReadHits    map[int64][]time.Time
+	acceleratedUntil map[int64]time.Time
 }
 
 type oauthSleeperCandidate struct {
@@ -142,10 +160,12 @@ func DefaultOAuthSleeperSettings() *OAuthSleeperSettings {
 
 func NewOAuthSleeperService(repo OAuthSleeperRepository, settingRepo SettingRepository) *OAuthSleeperService {
 	return &OAuthSleeperService{
-		repo:        repo,
-		settingRepo: settingRepo,
-		now:         func() time.Time { return time.Now().UTC() },
-		stopCh:      make(chan struct{}),
+		repo:             repo,
+		settingRepo:      settingRepo,
+		now:              func() time.Time { return time.Now().UTC() },
+		stopCh:           make(chan struct{}),
+		cacheReadHits:    make(map[int64][]time.Time),
+		acceleratedUntil: make(map[int64]time.Time),
 	}
 }
 
@@ -248,23 +268,34 @@ func (s *OAuthSleeperService) GetStatus(ctx context.Context) (*OAuthSleeperStatu
 		}
 	}
 
+	effectiveInterval, acceleratedUntil, acceleratedGroupIDs := s.oauthSleeperAccelerationStatus(*settings, s.now())
 	s.statusMu.RLock()
-	lastScanAt := s.lastScanAt
-	status := &OAuthSleeperStatus{
-		Enabled:             settings.Enabled,
-		ThresholdPercent:    settings.ThresholdPercent,
-		ScanIntervalSeconds: settings.ScanIntervalSeconds,
-		MaxSleepPerScan:     settings.MaxSleepPerScan,
-		IncludeOpenAI:       settings.IncludeOpenAI,
-		IncludeAnthropic:    settings.IncludeAnthropic,
-		GroupIDs:            append([]int64(nil), settings.GroupIDs...),
-		LastScanAt:          lastScanAt,
-		LastScanned:         s.lastScanned,
-		LastTriggered:       s.lastTriggered,
-		LastError:           s.lastError,
-		SleepingAccounts:    sleeping,
+	var lastScanAt *time.Time
+	if s.lastScanAt != nil {
+		t := *s.lastScanAt
+		lastScanAt = &t
 	}
+	lastScanned := s.lastScanned
+	lastTriggered := s.lastTriggered
+	lastError := s.lastError
 	s.statusMu.RUnlock()
+	status := &OAuthSleeperStatus{
+		Enabled:                      settings.Enabled,
+		ThresholdPercent:             settings.ThresholdPercent,
+		ScanIntervalSeconds:          settings.ScanIntervalSeconds,
+		EffectiveScanIntervalSeconds: int(effectiveInterval / time.Second),
+		MaxSleepPerScan:              settings.MaxSleepPerScan,
+		IncludeOpenAI:                settings.IncludeOpenAI,
+		IncludeAnthropic:             settings.IncludeAnthropic,
+		GroupIDs:                     append([]int64(nil), settings.GroupIDs...),
+		AcceleratedUntil:             acceleratedUntil,
+		AcceleratedGroupIDs:          acceleratedGroupIDs,
+		LastScanAt:                   lastScanAt,
+		LastScanned:                  lastScanned,
+		LastTriggered:                lastTriggered,
+		LastError:                    lastError,
+		SleepingAccounts:             sleeping,
+	}
 	return status, nil
 }
 
@@ -300,7 +331,7 @@ func (s *OAuthSleeperService) loop() {
 
 		interval := time.Duration(defaultOAuthSleeperScanIntervalSecond) * time.Second
 		if settings != nil && settings.ScanIntervalSeconds > 0 {
-			interval = time.Duration(settings.ScanIntervalSeconds) * time.Second
+			interval = s.effectiveScanInterval(*settings, s.now())
 		}
 
 		timer := time.NewTimer(interval)
@@ -406,6 +437,103 @@ func (s *OAuthSleeperService) runScan(ctx context.Context, settings OAuthSleeper
 
 	s.recordScanStatusAt(now, result.Scanned, result.Triggered, nil)
 	return result, nil
+}
+
+func (s *OAuthSleeperService) ObserveUsageLogInserted(log *UsageLog) {
+	if s == nil || log == nil || log.GroupID == nil || *log.GroupID <= 0 || log.CacheReadCost <= oauthSleeperAccelerationThresholdCost {
+		return
+	}
+	s.recordCacheReadHit(*log.GroupID, s.now())
+}
+
+func (s *OAuthSleeperService) recordCacheReadHit(groupID int64, now time.Time) {
+	if s == nil || groupID <= 0 {
+		return
+	}
+	now = now.UTC()
+	cutoff := now.Add(-oauthSleeperAccelerationWindow)
+
+	s.accelerationMu.Lock()
+	defer s.accelerationMu.Unlock()
+	if s.cacheReadHits == nil {
+		s.cacheReadHits = make(map[int64][]time.Time)
+	}
+	if s.acceleratedUntil == nil {
+		s.acceleratedUntil = make(map[int64]time.Time)
+	}
+
+	hits := s.cacheReadHits[groupID]
+	filtered := hits[:0]
+	for _, hit := range hits {
+		if hit.After(cutoff) || hit.Equal(cutoff) {
+			filtered = append(filtered, hit)
+		}
+	}
+	filtered = append(filtered, now)
+	if len(filtered) > oauthSleeperAccelerationTriggerCount {
+		filtered = append([]time.Time(nil), filtered[len(filtered)-oauthSleeperAccelerationTriggerCount:]...)
+	}
+	s.cacheReadHits[groupID] = filtered
+	if len(filtered) >= oauthSleeperAccelerationTriggerCount {
+		s.acceleratedUntil[groupID] = now.Add(oauthSleeperAccelerationDuration)
+	}
+}
+
+func (s *OAuthSleeperService) effectiveScanInterval(settings OAuthSleeperSettings, now time.Time) time.Duration {
+	normalizeOAuthSleeperSettingsForRead(&settings)
+	configured := time.Duration(settings.ScanIntervalSeconds) * time.Second
+	if configured <= 0 {
+		configured = time.Duration(defaultOAuthSleeperScanIntervalSecond) * time.Second
+	}
+	if !settings.Enabled {
+		return configured
+	}
+	if !s.hasAcceleratedGroup(settings.GroupIDs, now) || configured <= oauthSleeperAccelerationInterval {
+		return configured
+	}
+	return oauthSleeperAccelerationInterval
+}
+
+func (s *OAuthSleeperService) oauthSleeperAccelerationStatus(settings OAuthSleeperSettings, now time.Time) (time.Duration, *time.Time, []int64) {
+	interval := s.effectiveScanInterval(settings, now)
+	groupIDs, until := s.acceleratedGroups(settings.GroupIDs, now)
+	return interval, until, groupIDs
+}
+
+func (s *OAuthSleeperService) hasAcceleratedGroup(groupIDs []int64, now time.Time) bool {
+	groupIDs, _ = s.acceleratedGroups(groupIDs, now)
+	return len(groupIDs) > 0
+}
+
+func (s *OAuthSleeperService) acceleratedGroups(groupIDs []int64, now time.Time) ([]int64, *time.Time) {
+	if s == nil || len(groupIDs) == 0 {
+		return []int64{}, nil
+	}
+	now = now.UTC()
+	selected := int64Set(normalizeOAuthSleeperGroupIDs(groupIDs))
+
+	s.accelerationMu.Lock()
+	defer s.accelerationMu.Unlock()
+
+	out := make([]int64, 0, len(selected))
+	var latest *time.Time
+	for groupID := range selected {
+		until, ok := s.acceleratedUntil[groupID]
+		if !ok || !until.After(now) {
+			if ok {
+				delete(s.acceleratedUntil, groupID)
+			}
+			continue
+		}
+		until = until.UTC()
+		out = append(out, groupID)
+		if latest == nil || until.After(*latest) {
+			cp := until
+			latest = &cp
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, latest
 }
 
 func (s *OAuthSleeperService) recordScanStatus(scanned, triggered int, err error) {

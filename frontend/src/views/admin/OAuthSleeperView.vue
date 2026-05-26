@@ -64,6 +64,19 @@
         </div>
 
         <div
+          v-if="isAccelerated"
+          class="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 dark:border-sky-900/50 dark:bg-sky-900/20 dark:text-sky-200"
+        >
+          <div class="flex items-start gap-3">
+            <Icon name="bolt" size="sm" class="mt-0.5 flex-shrink-0" />
+            <div>
+              <p class="font-medium">{{ t('admin.oauthSleeper.acceleratedNoticeTitle') }}</p>
+              <p class="mt-0.5">{{ accelerationMetaText }}</p>
+            </div>
+          </div>
+        </div>
+
+        <div
           v-if="status?.last_error"
           class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200"
         >
@@ -350,7 +363,9 @@ const overviewItems = computed(() => [
     key: 'threshold',
     label: t('admin.oauthSleeper.overview.threshold'),
     value: formatPercent(status.value?.threshold_percent ?? settingsForm.threshold_percent),
-    meta: t('admin.oauthSleeper.intervalMeta', { seconds: status.value?.scan_interval_seconds ?? settingsForm.scan_interval_seconds }),
+    badge: isAccelerated.value ? t('admin.oauthSleeper.accelerated') : undefined,
+    badgeClass: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+    meta: effectiveIntervalText.value,
     icon: 'chart' as const,
     iconClass: 'bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:text-sky-300',
   },
@@ -395,6 +410,38 @@ const groupScopeText = computed(() => {
   if (names.length === 0) return t('admin.oauthSleeper.noGroupSelected')
   if (names.length <= 2) return names.join(' / ')
   return t('admin.oauthSleeper.groupScopeMeta', { count: names.length, names: names.slice(0, 2).join(' / ') })
+})
+
+const isAccelerated = computed(() =>
+  Boolean(status.value?.accelerated_until && (status.value?.accelerated_group_ids?.length ?? 0) > 0)
+)
+
+const acceleratedGroupNames = computed(() => {
+  const namesByID = new Map(groups.value.map((group) => [group.id, group.name]))
+  return (status.value?.accelerated_group_ids ?? []).map((groupID) => namesByID.get(groupID) ?? `#${groupID}`)
+})
+
+const acceleratedScopeText = computed(() => {
+  const names = acceleratedGroupNames.value
+  if (names.length === 0) return t('admin.oauthSleeper.noGroupSelected')
+  if (names.length <= 2) return names.join(' / ')
+  return t('admin.oauthSleeper.acceleratedGroupScopeMeta', { count: names.length, names: names.slice(0, 2).join(' / ') })
+})
+
+const accelerationMetaText = computed(() =>
+  t('admin.oauthSleeper.acceleratedUntilMeta', {
+    names: acceleratedScopeText.value,
+    time: formatDateTime(status.value?.accelerated_until),
+  })
+)
+
+const effectiveIntervalText = computed(() => {
+  const configured = status.value?.scan_interval_seconds ?? settingsForm.scan_interval_seconds
+  const effective = status.value?.effective_scan_interval_seconds ?? configured
+  if (effective < configured) {
+    return t('admin.oauthSleeper.effectiveIntervalAcceleratedMeta', { configured, effective })
+  }
+  return t('admin.oauthSleeper.effectiveIntervalMeta', { configured, effective })
 })
 
 function applySettings(settings: OAuthSleeperSettings) {

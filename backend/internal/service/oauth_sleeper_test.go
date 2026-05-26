@@ -395,6 +395,129 @@ func TestOAuthSleeperScanCapsPerSelectedGroup(t *testing.T) {
 	require.Equal(t, []int64{1, 3}, repo.updates)
 }
 
+func TestOAuthSleeperAccelerationTriggersAndRefreshesByGroup(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	svc := NewOAuthSleeperService(&oauthSleeperRepoStub{}, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+
+	groupID := int64(1)
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = []int64{groupID}
+	settings.ScanIntervalSeconds = 300
+
+	for i := 0; i < 2; i++ {
+		svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.011})
+		now = now.Add(time.Minute)
+	}
+	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
+
+	svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.011})
+	firstUntil := now.Add(oauthSleeperAccelerationDuration)
+	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
+	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
+	require.NotNil(t, gotUntil)
+	require.Equal(t, firstUntil, *gotUntil)
+	require.Equal(t, []int64{groupID}, gotGroups)
+
+	now = now.Add(time.Minute)
+	svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.011})
+	refreshedUntil := now.Add(oauthSleeperAccelerationDuration)
+	_, gotUntil, gotGroups = svc.oauthSleeperAccelerationStatus(settings, now)
+	require.NotNil(t, gotUntil)
+	require.Equal(t, refreshedUntil, *gotUntil)
+	require.Equal(t, []int64{groupID}, gotGroups)
+}
+
+func TestOAuthSleeperAccelerationIsScopedToSelectedGroups(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	svc := NewOAuthSleeperService(&oauthSleeperRepoStub{}, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+
+	group1 := int64(1)
+	group2 := int64(2)
+	for i := 0; i < 2; i++ {
+		svc.ObserveUsageLogInserted(&UsageLog{GroupID: &group1, CacheReadCost: 0.02})
+	}
+	for i := 0; i < 3; i++ {
+		svc.ObserveUsageLogInserted(&UsageLog{GroupID: &group2, CacheReadCost: 0.02})
+	}
+
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = []int64{group1}
+	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
+	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
+	require.Nil(t, gotUntil)
+	require.Empty(t, gotGroups)
+
+	settings.GroupIDs = []int64{group1, group2}
+	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
+	_, gotUntil, gotGroups = svc.oauthSleeperAccelerationStatus(settings, now)
+	require.NotNil(t, gotUntil)
+	require.Equal(t, []int64{group2}, gotGroups)
+}
+
+func TestOAuthSleeperAccelerationIgnoresLowCostAndMissingGroup(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	svc := NewOAuthSleeperService(&oauthSleeperRepoStub{}, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+
+	groupID := int64(1)
+	settings := *DefaultOAuthSleeperSettings()
+	settings.GroupIDs = []int64{groupID}
+
+	svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.01})
+	svc.ObserveUsageLogInserted(&UsageLog{GroupID: nil, CacheReadCost: 0.02})
+	svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.009})
+	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
+}
+
+func TestOAuthSleeperAccelerationExpiresToConfiguredInterval(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	svc := NewOAuthSleeperService(&oauthSleeperRepoStub{}, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+
+	groupID := int64(1)
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = []int64{groupID}
+	settings.ScanIntervalSeconds = 120
+
+	for i := 0; i < 3; i++ {
+		svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.02})
+	}
+	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
+
+	now = now.Add(oauthSleeperAccelerationDuration + time.Second)
+	require.Equal(t, 120*time.Second, svc.effectiveScanInterval(settings, now))
+	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
+	require.Nil(t, gotUntil)
+	require.Empty(t, gotGroups)
+}
+
+func TestOAuthSleeperAccelerationDoesNotShortenDisabledLoop(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	svc := NewOAuthSleeperService(&oauthSleeperRepoStub{}, &oauthSleeperSettingRepoStub{})
+	svc.now = func() time.Time { return now }
+
+	groupID := int64(1)
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = false
+	settings.GroupIDs = []int64{groupID}
+	settings.ScanIntervalSeconds = 300
+
+	for i := 0; i < 3; i++ {
+		svc.ObserveUsageLogInserted(&UsageLog{GroupID: &groupID, CacheReadCost: 0.02})
+	}
+
+	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
+	interval, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
+	require.Equal(t, 300*time.Second, interval)
+	require.NotNil(t, gotUntil)
+	require.Equal(t, []int64{groupID}, gotGroups)
+}
+
 func openAISleeperAccount(id int64, utilization float64, resetAt time.Time) Account {
 	return Account{
 		ID:       id,

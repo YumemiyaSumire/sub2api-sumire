@@ -66,8 +66,13 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, params?: Record<string, string | number>) =>
-        key.replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`)),
+      t: (key: string, params?: Record<string, string | number>) => {
+        const messages: Record<string, string> = {
+          'admin.oauthSleeper.acceleratedUntilMeta': '{names} until {time}',
+          'admin.oauthSleeper.effectiveIntervalAcceleratedMeta': '{configured}s to {effective}s',
+        }
+        return (messages[key] ?? key).replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`))
+      },
     }),
   }
 })
@@ -84,6 +89,8 @@ const baseSettings = (): OAuthSleeperSettings => ({
 
 const baseStatus = (): OAuthSleeperStatus => ({
   ...baseSettings(),
+  effective_scan_interval_seconds: 300,
+  accelerated_group_ids: [],
   last_scan_at: '2026-05-24T00:00:00Z',
   last_scanned: 2,
   last_triggered: 1,
@@ -147,6 +154,22 @@ describe('admin OAuthSleeperView', () => {
     expect(wrapper.text()).toContain('OpenAI group')
     expect(wrapper.text()).toContain('admin.oauthSleeper.noEvents')
     expect(wrapper.text()).toContain('admin.oauthSleeper.noSleepingAccounts')
+  })
+
+  it('shows accelerated scan status when backend reports active groups', async () => {
+    getStatus.mockResolvedValueOnce({
+      ...baseStatus(),
+      effective_scan_interval_seconds: 10,
+      accelerated_until: '2026-05-24T00:10:00Z',
+      accelerated_group_ids: [1],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.oauthSleeper.acceleratedNoticeTitle')
+    expect(wrapper.text()).toContain('OpenAI group')
+    expect(wrapper.text()).toContain('2026-05-24T00:10:00Z')
+    expect(wrapper.text()).toContain('300s to 10s')
   })
 
   it('saves settings payload from the form', async () => {

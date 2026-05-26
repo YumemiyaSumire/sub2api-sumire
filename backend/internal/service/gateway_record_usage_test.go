@@ -45,6 +45,7 @@ func newGatewayRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo 
 		nil,
 		nil,
 		nil, // userPlatformQuotaRepo
+		nil,
 	)
 }
 
@@ -77,6 +78,37 @@ func (s *openAIRecordUsageBestEffortLogRepoStub) Create(ctx context.Context, log
 	s.lastLog = log
 	s.lastCtxErr = ctx.Err()
 	return false, s.createErr
+}
+
+type usageLogBestEffortResultRepoStub struct {
+	UsageLogRepository
+
+	bestEffortInserted bool
+	bestEffortErr      error
+	createInserted     bool
+	createErr          error
+	bestEffortCalls    int
+	createCalls        int
+}
+
+func (s *usageLogBestEffortResultRepoStub) CreateBestEffortWithResult(ctx context.Context, log *UsageLog) (bool, error) {
+	s.bestEffortCalls++
+	return s.bestEffortInserted, s.bestEffortErr
+}
+
+func (s *usageLogBestEffortResultRepoStub) Create(ctx context.Context, log *UsageLog) (bool, error) {
+	s.createCalls++
+	return s.createInserted, s.createErr
+}
+
+type usageLogObserverStub struct {
+	calls int
+	logs  []*UsageLog
+}
+
+func (s *usageLogObserverStub) ObserveUsageLogInserted(log *UsageLog) {
+	s.calls++
+	s.logs = append(s.logs, log)
 }
 
 func TestGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
@@ -412,6 +444,100 @@ func TestGatewayServiceRecordUsage_DroppedUsageLogDoesNotSyncFallback(t *testing
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.bestEffortCalls)
 	require.Equal(t, 0, usageRepo.createCalls)
+}
+
+func TestWriteUsageLogBestEffortReturnsInsertedFromBestEffortResult(t *testing.T) {
+	repo := &usageLogBestEffortResultRepoStub{bestEffortInserted: true}
+	inserted := writeUsageLogBestEffort(context.Background(), repo, &UsageLog{RequestID: "inserted"}, "service.test")
+
+	require.True(t, inserted)
+	require.Equal(t, 1, repo.bestEffortCalls)
+	require.Zero(t, repo.createCalls)
+}
+
+func TestWriteUsageLogBestEffortDoesNotCountDuplicateResult(t *testing.T) {
+	repo := &usageLogBestEffortResultRepoStub{bestEffortInserted: false}
+	inserted := writeUsageLogBestEffort(context.Background(), repo, &UsageLog{RequestID: "duplicate"}, "service.test")
+
+	require.False(t, inserted)
+	require.Equal(t, 1, repo.bestEffortCalls)
+	require.Zero(t, repo.createCalls)
+}
+
+func TestWriteUsageLogBestEffortFallsBackAndReturnsSyncInsertResult(t *testing.T) {
+	repo := &usageLogBestEffortResultRepoStub{
+		bestEffortErr:  errors.New("temporary batch failure"),
+		createInserted: true,
+	}
+	inserted := writeUsageLogBestEffort(context.Background(), repo, &UsageLog{RequestID: "fallback"}, "service.test")
+
+	require.True(t, inserted)
+	require.Equal(t, 1, repo.bestEffortCalls)
+	require.Equal(t, 1, repo.createCalls)
+}
+
+func TestGatewayRecordUsageNotifiesOAuthSleeperOnlyAfterInsertedUsageLog(t *testing.T) {
+	groupID := int64(11)
+	usageRepo := &usageLogBestEffortResultRepoStub{bestEffortInserted: true}
+	observer := &usageLogObserverStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.usageLogObserver = observer
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway-observe-inserted",
+			Usage: ClaudeUsage{
+				InputTokens:          10,
+				OutputTokens:         6,
+				CacheReadInputTokens: 1000,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      501,
+			GroupID: &groupID,
+			Group:   &Group{ID: groupID},
+		},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, observer.calls)
+	require.Len(t, observer.logs, 1)
+	require.Equal(t, groupID, *observer.logs[0].GroupID)
+}
+
+func TestGatewayRecordUsageDoesNotNotifyOAuthSleeperForDuplicateUsageLog(t *testing.T) {
+	groupID := int64(11)
+	usageRepo := &usageLogBestEffortResultRepoStub{bestEffortInserted: false}
+	observer := &usageLogObserverStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.usageLogObserver = observer
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway-observe-duplicate",
+			Usage: ClaudeUsage{
+				InputTokens:          10,
+				OutputTokens:         6,
+				CacheReadInputTokens: 1000,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      501,
+			GroupID: &groupID,
+			Group:   &Group{ID: groupID},
+		},
+		User:    &User{ID: 601},
+		Account: &Account{ID: 701},
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, observer.calls)
 }
 
 func TestGatewayServiceRecordUsage_BillingErrorSkipsUsageLogWrite(t *testing.T) {
