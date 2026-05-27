@@ -58,10 +58,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	return nil, nil
 }
 
-func provideUsageLogInsertObserver(oauthSleeper *service.OAuthSleeperService) service.UsageLogInsertObserver {
-	return oauthSleeper
-}
-
 func providePrivacyClientFactory() service.PrivacyClientFactory {
 	return repository.CreatePrivacyReqClient
 }

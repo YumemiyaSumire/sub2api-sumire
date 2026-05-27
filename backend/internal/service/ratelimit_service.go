@@ -29,6 +29,7 @@ type RateLimitService struct {
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	runtimeBlocker        AccountRuntimeBlocker
+	usageSnapshotObserver AccountUsageSnapshotObserver
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
 }
@@ -108,6 +109,10 @@ func (s *RateLimitService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocke
 	s.runtimeBlocker = blocker
 }
 
+func (s *RateLimitService) SetAccountUsageSnapshotObserver(observer AccountUsageSnapshotObserver) {
+	s.usageSnapshotObserver = observer
+}
+
 func (s *RateLimitService) notifyAccountSchedulingBlocked(account *Account, until time.Time, reason string) {
 	if s == nil || s.runtimeBlocker == nil || account == nil {
 		return
@@ -120,6 +125,18 @@ func (s *RateLimitService) notifyAccountSchedulingBlockCleared(accountID int64) 
 		return
 	}
 	s.runtimeBlocker.ClearAccountSchedulingBlock(accountID)
+}
+
+func (s *RateLimitService) notifyAccountUsageSnapshotUpdated(accountID int64) {
+	if s == nil || s.usageSnapshotObserver == nil || accountID <= 0 {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic in account usage snapshot observer", "recover", r, "account_id", accountID)
+		}
+	}()
+	s.usageSnapshotObserver.ObserveAccountUsageSnapshotUpdated(accountID)
 }
 
 // ErrorPolicyResult 表示错误策略检查的结果
@@ -1425,6 +1442,8 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 		extraUpdates["passive_usage_sampled_at"] = time.Now().UTC().Format(time.RFC3339)
 		if err := s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates); err != nil {
 			slog.Warn("passive_usage_update_failed", "account_id", account.ID, "error", err)
+		} else {
+			s.notifyAccountUsageSnapshotUpdated(account.ID)
 		}
 	}
 

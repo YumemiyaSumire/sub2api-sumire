@@ -224,12 +224,14 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	usageSnapshotObserver AccountUsageSnapshotObserver,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetAccountUsageSnapshotObserver(usageSnapshotObserver)
 	return svc
 }
 
@@ -500,6 +502,8 @@ var ProviderSet = wire.NewSet(
 	NewGatewayService,
 	NewOpenAIGatewayService,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
+	wire.Bind(new(UsageLogInsertObserver), new(*OAuthSleeperService)),
+	wire.Bind(new(AccountUsageSnapshotObserver), new(*OAuthSleeperService)),
 	NewOAuthService,
 	NewOpenAIOAuthService,
 	NewGeminiOAuthService,

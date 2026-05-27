@@ -23,6 +23,18 @@ type oauthSleeperHandlerRepoStub struct {
 	events   []service.OAuthSleeperEvent
 }
 
+func (r *oauthSleeperHandlerRepoStub) GetOAuthSleeperAccount(_ context.Context, accountID int64) (*service.Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, account := range r.accounts {
+		if account.ID == accountID {
+			cp := account
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *oauthSleeperHandlerRepoStub) ListOAuthSleeperAccounts(context.Context, []string, []int64) ([]service.Account, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -173,7 +185,7 @@ func TestOAuthSleeperHandlerSettingsDefaultAndUpdate(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
 	require.False(t, getResp.Data.Enabled)
-	require.Equal(t, 95.0, getResp.Data.ThresholdPercent)
+	require.Equal(t, 90.0, getResp.Data.ThresholdPercent)
 	require.Equal(t, 300, getResp.Data.ScanIntervalSeconds)
 
 	payload := service.OAuthSleeperSettings{
@@ -184,6 +196,9 @@ func TestOAuthSleeperHandlerSettingsDefaultAndUpdate(t *testing.T) {
 		IncludeOpenAI:       true,
 		IncludeAnthropic:    false,
 		GroupIDs:            []int64{1},
+		GroupThresholdPercent: map[int64]float64{
+			1: 88,
+		},
 	}
 	raw, err := json.Marshal(payload)
 	require.NoError(t, err)

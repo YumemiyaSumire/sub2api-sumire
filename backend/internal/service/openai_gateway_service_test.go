@@ -46,6 +46,18 @@ func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, u
 	return nil
 }
 
+type snapshotObserverStub struct {
+	calls chan int64
+}
+
+func (s *snapshotObserverStub) ObserveUsageLogInserted(_ *UsageLog) {}
+
+func (s *snapshotObserverStub) ObserveAccountUsageSnapshotUpdated(accountID int64) {
+	if s.calls != nil {
+		s.calls <- accountID
+	}
+}
+
 func (r stubOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
 	for i := range r.accounts {
 		if r.accounts[i].ID == id {
@@ -1761,7 +1773,11 @@ func TestOpenAIValidateUpstreamBaseURLEnabledEnforcesAllowlist(t *testing.T) {
 
 func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 	repo := &snapshotUpdateAccountRepo{updateExtraCalls: make(chan map[string]any, 1)}
-	svc := &OpenAIGatewayService{accountRepo: repo}
+	observer := &snapshotObserverStub{calls: make(chan int64, 1)}
+	svc := &OpenAIGatewayService{
+		accountRepo:           repo,
+		usageSnapshotObserver: usageSnapshotObserverFromUsageLogObserver(observer),
+	}
 	headers := http.Header{}
 	headers.Set("x-codex-primary-used-percent", "12")
 	headers.Set("x-codex-secondary-used-percent", "34")
@@ -1780,6 +1796,13 @@ func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 		require.Equal(t, 86400, updates["codex_7d_reset_after_seconds"])
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected UpdateExtra to be called")
+	}
+
+	select {
+	case accountID := <-observer.calls:
+		require.Equal(t, int64(123), accountID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected usage snapshot observer to be called")
 	}
 }
 

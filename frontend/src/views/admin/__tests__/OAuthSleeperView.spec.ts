@@ -79,7 +79,8 @@ vi.mock('vue-i18n', async () => {
 
 const baseSettings = (): OAuthSleeperSettings => ({
   enabled: false,
-  threshold_percent: 95,
+  threshold_percent: 90,
+  group_threshold_percent: {},
   scan_interval_seconds: 300,
   max_sleep_per_scan: 3,
   include_openai: true,
@@ -187,6 +188,7 @@ describe('admin OAuthSleeperView', () => {
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
       threshold_percent: 96,
+      group_threshold_percent: {},
       scan_interval_seconds: 600,
       max_sleep_per_scan: 2,
       include_openai: true,
@@ -194,6 +196,35 @@ describe('admin OAuthSleeperView', () => {
       group_ids: [1],
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.oauthSleeper.saved')
+  })
+
+  it('saves selected group threshold overrides and drops unselected values', async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettings(),
+      group_ids: [1],
+      group_threshold_percent: { 1: 88, 2: 80 },
+    })
+    getStatus.mockResolvedValueOnce({
+      ...baseStatus(),
+      group_ids: [1],
+      group_threshold_percent: { 1: 88, 2: 80 },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const overrideInput = wrapper
+      .findAll('input[type="number"]')
+      .find((input) => input.attributes('value') === '88')
+    if (!overrideInput) throw new Error('group threshold input not found')
+    await overrideInput.setValue('87')
+    await wrapper.findAll('button[role="switch"]')[0].trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      group_ids: [1],
+      group_threshold_percent: { 1: 87 },
+    }))
   })
 
   it('refreshes status and events after a manual scan', async () => {

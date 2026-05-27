@@ -101,7 +101,7 @@
 
               <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <label class="block">
-                  <span class="input-label">{{ t('admin.oauthSleeper.threshold') }}</span>
+                  <span class="input-label">{{ t('admin.oauthSleeper.defaultThreshold') }}</span>
                   <input
                     v-model.number="settingsForm.threshold_percent"
                     type="number"
@@ -159,6 +159,32 @@
                   searchable
                 />
                 <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.groupScopeHint') }}</span>
+              </div>
+
+              <div v-if="selectedThresholdGroups.length > 0" class="rounded-lg border border-gray-100 p-4 dark:border-dark-700">
+                <div class="mb-3">
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.oauthSleeper.groupThresholds') }}</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.groupThresholdsHint') }}</p>
+                </div>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <label
+                    v-for="group in selectedThresholdGroups"
+                    :key="group.id"
+                    class="flex items-center gap-3 rounded border border-gray-100 px-3 py-2 dark:border-dark-700"
+                  >
+                    <span class="min-w-0 flex-1 truncate text-sm text-gray-700 dark:text-gray-200">{{ group.name }}</span>
+                    <input
+                      :value="settingsForm.group_threshold_percent[group.id] ?? ''"
+                      type="number"
+                      min="1"
+                      max="100"
+                      step="0.1"
+                      :placeholder="formatPercent(settingsForm.threshold_percent)"
+                      class="input w-24"
+                      @input="updateGroupThreshold(group.id, ($event.target as HTMLInputElement).value)"
+                    />
+                  </label>
+                </div>
               </div>
 
               <div class="flex justify-end gap-2 border-t border-gray-100 pt-5 dark:border-dark-700">
@@ -321,7 +347,8 @@ const appStore = useAppStore()
 
 const defaultSettings: OAuthSleeperSettings = {
   enabled: false,
-  threshold_percent: 95,
+  threshold_percent: 90,
+  group_threshold_percent: {},
   scan_interval_seconds: 300,
   max_sleep_per_scan: 3,
   include_openai: true,
@@ -398,6 +425,11 @@ const oauthSleeperGroups = computed(() =>
   })
 )
 
+const selectedThresholdGroups = computed(() => {
+  const selected = new Set(settingsForm.group_ids)
+  return oauthSleeperGroups.value.filter((group) => selected.has(group.id))
+})
+
 const selectedGroupNames = computed(() => {
   const namesByID = new Map(groups.value.map((group) => [group.id, group.name]))
   return (status.value?.group_ids ?? settingsForm.group_ids)
@@ -445,7 +477,12 @@ const effectiveIntervalText = computed(() => {
 })
 
 function applySettings(settings: OAuthSleeperSettings) {
-  const normalized = { ...defaultSettings, ...settings, group_ids: [...(settings.group_ids ?? [])] }
+  const normalized = {
+    ...defaultSettings,
+    ...settings,
+    group_ids: [...(settings.group_ids ?? [])],
+    group_threshold_percent: { ...(settings.group_threshold_percent ?? {}) },
+  }
   savedSettings.value = normalized
   Object.assign(settingsForm, normalized)
 }
@@ -455,15 +492,36 @@ function resetForm() {
 }
 
 function buildSettingsPayload(): OAuthSleeperSettings {
+  const selected = new Set(settingsForm.group_ids)
+  const groupThresholds: Record<number, number> = {}
+  for (const [rawGroupID, rawThreshold] of Object.entries(settingsForm.group_threshold_percent ?? {})) {
+    const groupID = Number(rawGroupID)
+    const threshold = Number(rawThreshold)
+    if (selected.has(groupID) && Number.isFinite(threshold)) {
+      groupThresholds[groupID] = threshold
+    }
+  }
   return {
     enabled: settingsForm.enabled,
     threshold_percent: Number(settingsForm.threshold_percent),
+    group_threshold_percent: groupThresholds,
     scan_interval_seconds: Number(settingsForm.scan_interval_seconds),
     max_sleep_per_scan: Number(settingsForm.max_sleep_per_scan),
     include_openai: settingsForm.include_openai,
     include_anthropic: settingsForm.include_anthropic,
     group_ids: [...settingsForm.group_ids],
   }
+}
+
+function updateGroupThreshold(groupID: number, value: string) {
+  const next = { ...(settingsForm.group_threshold_percent ?? {}) }
+  const trimmed = value.trim()
+  if (trimmed === '') {
+    delete next[groupID]
+  } else {
+    next[groupID] = Number(trimmed)
+  }
+  settingsForm.group_threshold_percent = next
 }
 
 async function loadGroups() {

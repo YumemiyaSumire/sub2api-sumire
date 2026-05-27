@@ -345,6 +345,7 @@ type OpenAIGatewayService struct {
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	usageLogObserver      UsageLogInsertObserver
+	usageSnapshotObserver AccountUsageSnapshotObserver
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -424,6 +425,7 @@ func NewOpenAIGatewayService(
 		settingService:        settingService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 		usageLogObserver:      usageLogObserver,
+		usageSnapshotObserver: usageSnapshotObserverFromUsageLogObserver(usageLogObserver),
 		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
 		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 	}
@@ -6354,8 +6356,32 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	go func() {
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
+			slog.Debug("openai codex usage snapshot update failed", "account_id", accountID, "error", err)
+			return
+		}
+		s.notifyAccountUsageSnapshotUpdated(accountID)
 	}()
+}
+
+func usageSnapshotObserverFromUsageLogObserver(observer UsageLogInsertObserver) AccountUsageSnapshotObserver {
+	if observer == nil {
+		return nil
+	}
+	snapshotObserver, _ := observer.(AccountUsageSnapshotObserver)
+	return snapshotObserver
+}
+
+func (s *OpenAIGatewayService) notifyAccountUsageSnapshotUpdated(accountID int64) {
+	if s == nil || s.usageSnapshotObserver == nil || accountID <= 0 {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic in account usage snapshot observer", "recover", r, "account_id", accountID)
+		}
+	}()
+	s.usageSnapshotObserver.ObserveAccountUsageSnapshotUpdated(accountID)
 }
 
 func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.Context, accountID int64, headers http.Header) {

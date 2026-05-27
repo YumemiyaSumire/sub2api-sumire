@@ -161,6 +161,14 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 	return &accounts[0], nil
 }
 
+func (r *accountRepository) GetOAuthSleeperAccount(ctx context.Context, accountID int64) (*service.Account, error) {
+	account, err := r.GetByID(ctx, accountID)
+	if errors.Is(err, service.ErrAccountNotFound) {
+		return nil, nil
+	}
+	return account, err
+}
+
 func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
 	if len(ids) == 0 {
 		return []*service.Account{}, nil

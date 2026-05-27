@@ -6,6 +6,7 @@ export type OAuthSleeperPlatform = 'openai' | 'anthropic'
 export interface OAuthSleeperSettings {
   enabled: boolean
   threshold_percent: number
+  group_threshold_percent: Record<number, number>
   scan_interval_seconds: number
   max_sleep_per_scan: number
   include_openai: boolean

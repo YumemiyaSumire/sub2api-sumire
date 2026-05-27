@@ -151,7 +151,7 @@ func TestShouldClearStickySession(t *testing.T) {
 func TestOAuthSleeperStickyGrace(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	resetAt := now.Add(10 * time.Minute)
-	graceUntil := now.Add(60 * time.Second)
+	graceUntil := now.Add(30 * time.Second)
 
 	account := &Account{
 		Status:           StatusActive,
@@ -165,8 +165,8 @@ func TestOAuthSleeperStickyGrace(t *testing.T) {
 		},
 	}
 
-	require.False(t, shouldClearStickySessionAt(account, "", now.Add(30*time.Second)))
-	require.True(t, shouldClearStickySessionAt(account, "", now.Add(61*time.Second)))
+	require.False(t, shouldClearStickySessionAt(account, "", now.Add(29*time.Second)))
+	require.True(t, shouldClearStickySessionAt(account, "", now.Add(31*time.Second)))
 }
 
 func TestOAuthSleeperStickyGraceDoesNotCoverRealRateLimitExtension(t *testing.T) {

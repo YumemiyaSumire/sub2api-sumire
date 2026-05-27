@@ -26,7 +26,7 @@ describe('admin oauthSleeper api', () => {
   it('fetches status and settings from the admin oauth sleeper endpoints', async () => {
     get
       .mockResolvedValueOnce({ data: { enabled: false, sleeping_accounts: [] } })
-      .mockResolvedValueOnce({ data: { enabled: false, threshold_percent: 95 } })
+      .mockResolvedValueOnce({ data: { enabled: false, threshold_percent: 90, group_threshold_percent: {} } })
 
     await expect(oauthSleeperAPI.getStatus()).resolves.toEqual({
       enabled: false,
@@ -34,7 +34,8 @@ describe('admin oauthSleeper api', () => {
     })
     await expect(oauthSleeperAPI.getSettings()).resolves.toEqual({
       enabled: false,
-      threshold_percent: 95,
+      threshold_percent: 90,
+      group_threshold_percent: {},
     })
 
     expect(get).toHaveBeenNthCalledWith(1, '/admin/oauth-sleeper/status')
@@ -45,6 +46,7 @@ describe('admin oauthSleeper api', () => {
     const payload: OAuthSleeperSettings = {
       enabled: true,
       threshold_percent: 96,
+      group_threshold_percent: { 1: 88 },
       scan_interval_seconds: 300,
       max_sleep_per_scan: 2,
       include_openai: true,

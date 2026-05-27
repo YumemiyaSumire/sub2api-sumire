@@ -8179,6 +8179,10 @@ type UsageLogInsertObserver interface {
 	ObserveUsageLogInserted(log *UsageLog)
 }
 
+type AccountUsageSnapshotObserver interface {
+	ObserveAccountUsageSnapshotUpdated(accountID int64)
+}
+
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
 	Cost                  *CostBreakdown

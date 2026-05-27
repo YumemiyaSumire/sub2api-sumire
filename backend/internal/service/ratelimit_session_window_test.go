@@ -159,6 +159,14 @@ func newRateLimitServiceForTest(repo AccountRepository) *RateLimitService {
 	return &RateLimitService{accountRepo: repo}
 }
 
+type accountUsageSnapshotObserverStub struct {
+	accountIDs []int64
+}
+
+func (s *accountUsageSnapshotObserverStub) ObserveAccountUsageSnapshotUpdated(accountID int64) {
+	s.accountIDs = append(s.accountIDs, accountID)
+}
+
 func TestUpdateSessionWindow_UsesResetHeader(t *testing.T) {
 	// The reset header provides the real window end as a Unix timestamp.
 	// UpdateSessionWindow should use it instead of the hour-truncated prediction.
@@ -323,6 +331,28 @@ func TestUpdateSessionWindow_ClearsUtilizationOnWindowReset(t *testing.T) {
 	storeCall := repo.updateExtraCalls[1]
 	if val, ok := storeCall.Updates["session_window_utilization"].(float64); !ok || val != 0.15 {
 		t.Errorf("expected utilization stored as 0.15, got %v", storeCall.Updates["session_window_utilization"])
+	}
+}
+
+func TestUpdateSessionWindow_NotifiesUsageSnapshotObserverAfterPassiveUsageStored(t *testing.T) {
+	resetUnix := time.Now().Add(3 * time.Hour).Unix()
+
+	repo := &sessionWindowMockRepo{}
+	observer := &accountUsageSnapshotObserverStub{}
+	svc := newRateLimitServiceForTest(repo)
+	svc.SetAccountUsageSnapshotObserver(observer)
+
+	account := &Account{ID: 44}
+	headers := http.Header{}
+	headers.Set("anthropic-ratelimit-unified-5h-status", "allowed")
+	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", resetUnix))
+	headers.Set("anthropic-ratelimit-unified-5h-utilization", "0.91")
+	headers.Set("anthropic-ratelimit-unified-7d-utilization", "0.88")
+
+	svc.UpdateSessionWindow(context.Background(), account, headers)
+
+	if len(observer.accountIDs) != 1 || observer.accountIDs[0] != 44 {
+		t.Fatalf("expected usage snapshot observer to be called for account 44, got %#v", observer.accountIDs)
 	}
 }
 
