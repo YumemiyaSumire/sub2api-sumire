@@ -47,15 +47,6 @@ func (h *OAuthSleeperHandler) UpdateSettings(c *gin.Context) {
 	response.Success(c, settings)
 }
 
-func (h *OAuthSleeperHandler) ScanOnce(c *gin.Context) {
-	result, err := h.svc.ScanOnce(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, result)
-}
-
 func (h *OAuthSleeperHandler) ListEvents(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	events, pageResult, err := h.svc.ListEvents(c.Request.Context(), pagination.PaginationParams{

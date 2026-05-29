@@ -294,14 +294,13 @@ func TestOAuthSleeperScanCapsPerPlatformAndSortsCandidates(t *testing.T) {
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
 	svc.now = func() time.Time { return now }
 	settings := *DefaultOAuthSleeperSettings()
-	settings.MaxSleepPerScan = 2
 	settings.GroupIDs = []int64{1, 2}
 
 	result, err := svc.runScan(context.Background(), settings)
 	require.NoError(t, err)
 	require.Equal(t, 5, result.Scanned)
-	require.Equal(t, 4, result.Triggered)
-	require.Equal(t, []int64{2, 1, 11, 10}, repo.updates)
+	require.Equal(t, 5, result.Triggered)
+	require.Equal(t, []int64{2, 1, 3, 11, 10}, repo.updates)
 }
 
 func TestOAuthSleeperScanDoesNotRecordEventWhenExistingResetIsLater(t *testing.T) {
@@ -325,7 +324,7 @@ func TestOAuthSleeperScanDoesNotRecordEventWhenExistingResetIsLater(t *testing.T
 	require.Empty(t, repo.updates)
 }
 
-func TestOAuthSleeperScanOnceIgnoresDisabledSetting(t *testing.T) {
+func TestOAuthSleeperSnapshotIgnoresDisabledSetting(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	settings := *DefaultOAuthSleeperSettings()
 	settings.Enabled = false
@@ -340,10 +339,9 @@ func TestOAuthSleeperScanOnceIgnoresDisabledSetting(t *testing.T) {
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{data: map[string]string{SettingKeyOAuthSleeperSettings: string(data)}})
 	svc.now = func() time.Time { return now }
 
-	result, err := svc.ScanOnce(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 1, result.Scanned)
-	require.Equal(t, 1, result.Triggered)
+	groupID := int64(1)
+	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &groupID})
+	require.Empty(t, repo.events)
 }
 
 func TestOAuthSleeperBackgroundLoopSkipsWhenDisabled(t *testing.T) {
@@ -457,7 +455,7 @@ func TestOAuthSleeperLegacyConfigWithoutGroupsScansNothing(t *testing.T) {
 	require.Zero(t, repo.listCalls)
 }
 
-func TestOAuthSleeperScanCapsPerSelectedGroup(t *testing.T) {
+func TestOAuthSleeperScanCapsPerSelectedGroupWithInternalDefault(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	repo := &oauthSleeperRepoStub{
 		groups: []OAuthSleeperGroup{
@@ -465,80 +463,72 @@ func TestOAuthSleeperScanCapsPerSelectedGroup(t *testing.T) {
 			{ID: 2, Name: "OpenAI B", Platform: PlatformOpenAI},
 		},
 		accounts: []Account{
-			withGroupIDs(openAISleeperAccount(1, 99, now.Add(3*time.Hour)), 1),
-			withGroupIDs(openAISleeperAccount(2, 98, now.Add(2*time.Hour)), 1, 2),
-			withGroupIDs(openAISleeperAccount(3, 97, now.Add(1*time.Hour)), 2),
+			withGroupIDs(openAISleeperAccount(1, 99, now.Add(6*time.Hour)), 1),
+			withGroupIDs(openAISleeperAccount(2, 98, now.Add(5*time.Hour)), 1),
+			withGroupIDs(openAISleeperAccount(3, 97, now.Add(4*time.Hour)), 1),
+			withGroupIDs(openAISleeperAccount(4, 96, now.Add(3*time.Hour)), 1),
+			withGroupIDs(openAISleeperAccount(5, 95, now.Add(2*time.Hour)), 2),
+			withGroupIDs(openAISleeperAccount(6, 94, now.Add(1*time.Hour)), 2),
 		},
 	}
 	svc := NewOAuthSleeperService(repo, &oauthSleeperSettingRepoStub{})
 	svc.now = func() time.Time { return now }
 	settings := *DefaultOAuthSleeperSettings()
-	settings.MaxSleepPerScan = 1
 	settings.IncludeAnthropic = false
 	settings.GroupIDs = []int64{1, 2}
 
 	result, err := svc.runScan(context.Background(), settings)
 	require.NoError(t, err)
-	require.Equal(t, 3, result.Scanned)
-	require.Equal(t, 2, result.Triggered)
-	require.Equal(t, []int64{1, 3}, repo.updates)
+	require.Equal(t, 6, result.Scanned)
+	require.Equal(t, 5, result.Triggered)
+	require.Equal(t, []int64{1, 2, 3, 5, 6}, repo.updates)
 }
 
-func TestOAuthSleeperAccelerationTriggersAndRefreshesFromUsageSnapshot(t *testing.T) {
+func TestOAuthSleeperSnapshotTriggersSleepWhenThresholdReached(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	groupID := int64(1)
 	repo := &oauthSleeperRepoStub{
 		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
-		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 89, now.Add(time.Hour)), groupID)},
+		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 90, now.Add(time.Hour)), groupID)},
 	}
 	settings := *DefaultOAuthSleeperSettings()
 	settings.Enabled = true
 	settings.GroupIDs = []int64{groupID}
-	settings.ScanIntervalSeconds = 300
-	svc := NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
-	svc.now = func() time.Time { return now }
-
-	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &groupID})
-	firstUntil := now.Add(oauthSleeperAccelerationDuration)
-	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
-	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
-	require.NotNil(t, gotUntil)
-	require.Equal(t, firstUntil, *gotUntil)
-	require.Equal(t, []int64{groupID}, gotGroups)
-
-	now = now.Add(time.Minute)
-	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &groupID})
-	refreshedUntil := now.Add(oauthSleeperAccelerationDuration)
-	_, gotUntil, gotGroups = svc.oauthSleeperAccelerationStatus(settings, now)
-	require.NotNil(t, gotUntil)
-	require.Equal(t, refreshedUntil, *gotUntil)
-	require.Equal(t, []int64{groupID}, gotGroups)
-}
-
-func TestOAuthSleeperAccelerationTriggersAfterSnapshotUpdateWithoutUsageLogGroup(t *testing.T) {
-	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
-	groupID := int64(1)
-	repo := &oauthSleeperRepoStub{
-		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
-		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 89, now.Add(time.Hour)), groupID)},
-	}
-	settings := *DefaultOAuthSleeperSettings()
-	settings.Enabled = true
-	settings.GroupIDs = []int64{groupID}
-	settings.ScanIntervalSeconds = 300
 	svc := NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
 	svc.now = func() time.Time { return now }
 
 	svc.ObserveAccountUsageSnapshotUpdated(1)
 
-	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
-	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
-	require.NotNil(t, gotUntil)
-	require.Equal(t, now.Add(oauthSleeperAccelerationDuration), *gotUntil)
-	require.Equal(t, []int64{groupID}, gotGroups)
+	require.Equal(t, []int64{1}, repo.updates)
+	require.Len(t, repo.events, 1)
+	require.Equal(t, 90.0, repo.events[0].ThresholdPercent)
+	require.Equal(t, "codex_5h", repo.events[0].Window)
 }
 
-func TestOAuthSleeperAccelerationIsScopedToSelectedGroups(t *testing.T) {
+func TestOAuthSleeperSnapshotUsesGroupThresholdAndDeduplicates(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	groupID := int64(1)
+	resetAt := now.Add(time.Hour)
+	repo := &oauthSleeperRepoStub{
+		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
+		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 88, resetAt), groupID)},
+	}
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = []int64{groupID}
+	settings.GroupThresholdPercent = map[int64]float64{groupID: 87}
+	svc := NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
+	svc.now = func() time.Time { return now }
+
+	svc.ObserveAccountUsageSnapshotUpdated(1)
+	svc.ObserveAccountUsageSnapshotUpdated(1)
+
+	require.Equal(t, []int64{1}, repo.updates)
+	require.Len(t, repo.events, 1)
+	require.Equal(t, 87.0, repo.events[0].ThresholdPercent)
+}
+
+func TestOAuthSleeperSnapshotIsScopedToSelectedGroups(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	group1 := int64(1)
 	group2 := int64(2)
@@ -548,7 +538,7 @@ func TestOAuthSleeperAccelerationIsScopedToSelectedGroups(t *testing.T) {
 			{ID: group2, Name: "OpenAI B", Platform: PlatformOpenAI},
 		},
 		accounts: []Account{
-			withGroupIDs(openAISleeperAccount(1, 89, now.Add(time.Hour)), group2),
+			withGroupIDs(openAISleeperAccount(1, 90, now.Add(time.Hour)), group2),
 		},
 	}
 	settings := *DefaultOAuthSleeperSettings()
@@ -558,27 +548,21 @@ func TestOAuthSleeperAccelerationIsScopedToSelectedGroups(t *testing.T) {
 	svc.now = func() time.Time { return now }
 
 	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &group2})
-	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
-	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
-	require.Nil(t, gotUntil)
-	require.Empty(t, gotGroups)
+	require.Empty(t, repo.events)
 
 	settings.GroupIDs = []int64{group1, group2}
 	svc = NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
 	svc.now = func() time.Time { return now }
 	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &group2})
-	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
-	_, gotUntil, gotGroups = svc.oauthSleeperAccelerationStatus(settings, now)
-	require.NotNil(t, gotUntil)
-	require.Equal(t, []int64{group2}, gotGroups)
+	require.Equal(t, []int64{1}, repo.updates)
 }
 
-func TestOAuthSleeperAccelerationIgnoresBelowNearThresholdAndMissingGroup(t *testing.T) {
+func TestOAuthSleeperSnapshotIgnoresBelowThresholdAndMissingGroup(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	groupID := int64(1)
 	repo := &oauthSleeperRepoStub{
 		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
-		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 87.9, now.Add(time.Hour)), groupID)},
+		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 89.9, now.Add(time.Hour)), groupID)},
 	}
 	settings := *DefaultOAuthSleeperSettings()
 	settings.Enabled = true
@@ -588,54 +572,7 @@ func TestOAuthSleeperAccelerationIgnoresBelowNearThresholdAndMissingGroup(t *tes
 
 	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &groupID})
 	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: nil})
-	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
-}
-
-func TestOAuthSleeperAccelerationExpiresToConfiguredInterval(t *testing.T) {
-	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
-	groupID := int64(1)
-	repo := &oauthSleeperRepoStub{
-		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
-		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 90, now.Add(time.Hour)), groupID)},
-	}
-	settings := *DefaultOAuthSleeperSettings()
-	settings.Enabled = true
-	settings.GroupIDs = []int64{groupID}
-	settings.ScanIntervalSeconds = 120
-	svc := NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
-	svc.now = func() time.Time { return now }
-
-	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &groupID})
-	require.Equal(t, 10*time.Second, svc.effectiveScanInterval(settings, now))
-
-	now = now.Add(oauthSleeperAccelerationDuration + time.Second)
-	require.Equal(t, 120*time.Second, svc.effectiveScanInterval(settings, now))
-	_, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
-	require.Nil(t, gotUntil)
-	require.Empty(t, gotGroups)
-}
-
-func TestOAuthSleeperAccelerationDoesNotShortenDisabledLoop(t *testing.T) {
-	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
-	groupID := int64(1)
-	repo := &oauthSleeperRepoStub{
-		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
-		accounts: []Account{withGroupIDs(openAISleeperAccount(1, 90, now.Add(time.Hour)), groupID)},
-	}
-	settings := *DefaultOAuthSleeperSettings()
-	settings.Enabled = false
-	settings.GroupIDs = []int64{groupID}
-	settings.ScanIntervalSeconds = 300
-	svc := NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
-	svc.now = func() time.Time { return now }
-
-	svc.ObserveUsageLogInserted(&UsageLog{AccountID: 1, GroupID: &groupID})
-
-	require.Equal(t, 300*time.Second, svc.effectiveScanInterval(settings, now))
-	interval, gotUntil, gotGroups := svc.oauthSleeperAccelerationStatus(settings, now)
-	require.Equal(t, 300*time.Second, interval)
-	require.Nil(t, gotUntil)
-	require.Empty(t, gotGroups)
+	require.Empty(t, repo.events)
 }
 
 func openAISleeperAccount(id int64, utilization float64, resetAt time.Time) Account {

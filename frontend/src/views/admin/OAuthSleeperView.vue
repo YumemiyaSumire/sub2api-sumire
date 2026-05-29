@@ -16,15 +16,6 @@
             <Icon name="refresh" size="sm" :class="loading || eventsLoading ? 'animate-spin' : ''" />
             {{ t('common.refresh') }}
           </button>
-          <button
-            type="button"
-            class="btn btn-primary inline-flex items-center gap-2"
-            :disabled="scanning"
-            @click="runScanOnce"
-          >
-            <Icon name="play" size="sm" :class="scanning ? 'animate-spin' : ''" />
-            {{ scanning ? t('admin.oauthSleeper.scanning') : t('admin.oauthSleeper.scanOnce') }}
-          </button>
         </div>
       </div>
 
@@ -64,19 +55,6 @@
         </div>
 
         <div
-          v-if="isAccelerated"
-          class="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 dark:border-sky-900/50 dark:bg-sky-900/20 dark:text-sky-200"
-        >
-          <div class="flex items-start gap-3">
-            <Icon name="bolt" size="sm" class="mt-0.5 flex-shrink-0" />
-            <div>
-              <p class="font-medium">{{ t('admin.oauthSleeper.acceleratedNoticeTitle') }}</p>
-              <p class="mt-0.5">{{ accelerationMetaText }}</p>
-            </div>
-          </div>
-        </div>
-
-        <div
           v-if="status?.last_error"
           class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200"
         >
@@ -111,32 +89,6 @@
                     class="input"
                   />
                   <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.thresholdHint') }}</span>
-                </label>
-
-                <label class="block">
-                  <span class="input-label">{{ t('admin.oauthSleeper.scanInterval') }}</span>
-                  <input
-                    v-model.number="settingsForm.scan_interval_seconds"
-                    type="number"
-                    min="30"
-                    max="86400"
-                    step="1"
-                    class="input"
-                  />
-                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.intervalHint') }}</span>
-                </label>
-
-                <label class="block">
-                  <span class="input-label">{{ t('admin.oauthSleeper.maxSleepPerScan') }}</span>
-                  <input
-                    v-model.number="settingsForm.max_sleep_per_scan"
-                    type="number"
-                    min="1"
-                    max="100"
-                    step="1"
-                    class="input"
-                  />
-                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.maxSleepHint') }}</span>
                 </label>
 
                 <div class="space-y-3">
@@ -210,43 +162,44 @@
               </span>
             </div>
 
-            <div class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
-                <thead class="bg-gray-50 dark:bg-dark-800">
-                  <tr>
-                    <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.account') }}</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.platform') }}</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.resetAt') }}</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.remaining') }}</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-800 dark:bg-dark-800">
-                  <tr v-if="!status?.sleeping_accounts?.length">
-                    <td colspan="4" class="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">
-                      {{ t('admin.oauthSleeper.noSleepingAccounts') }}
-                    </td>
-                  </tr>
-                  <tr v-for="account in status?.sleeping_accounts ?? []" :key="account.account_id" class="hover:bg-gray-50 dark:hover:bg-dark-700/60">
-                    <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-900 dark:text-white">
-                      <div class="font-medium">{{ account.account_name || t('admin.oauthSleeper.unnamedAccount') }}</div>
-                      <div class="text-xs text-gray-400">#{{ account.account_id }}</div>
-                    </td>
-                    <td class="whitespace-nowrap px-5 py-4">
-                      <span class="inline-flex rounded-md border px-2 py-1 text-xs font-medium" :class="platformBadgeClass(account.platform)">
-                        {{ platformLabel(account.platform) }}
-                      </span>
-                    </td>
-                    <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(account.rate_limit_reset_at) }}</td>
-                    <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">{{ formatRemaining(account.remaining_seconds) }}</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="p-5">
+              <div
+                v-if="!status?.sleeping_accounts?.length"
+                class="rounded-lg border border-dashed border-gray-200 px-5 py-12 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
+              >
+                {{ t('admin.oauthSleeper.noSleepingAccounts') }}
+              </div>
+              <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                <article
+                  v-for="account in status?.sleeping_accounts ?? []"
+                  :key="account.account_id"
+                  class="rounded-lg border border-gray-100 bg-gray-50/60 p-4 shadow-sm transition hover:border-primary-200 hover:bg-white dark:border-dark-700 dark:bg-dark-900/40 dark:hover:border-primary-900/60 dark:hover:bg-dark-800"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <h3 class="truncate text-sm font-semibold text-gray-900 dark:text-white">
+                        {{ account.account_name || t('admin.oauthSleeper.unnamedAccount') }}
+                      </h3>
+                      <p class="mt-1 text-xs text-gray-400">#{{ account.account_id }}</p>
+                    </div>
+                    <span class="inline-flex flex-shrink-0 rounded-md border px-2 py-1 text-xs font-medium" :class="platformBadgeClass(account.platform)">
+                      {{ platformLabel(account.platform) }}
+                    </span>
+                  </div>
+                  <div class="mt-4 grid grid-cols-2 gap-3">
+                    <div class="rounded-md bg-white px-3 py-2 dark:bg-dark-800">
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.remaining') }}</p>
+                      <p class="mt-1 truncate text-sm font-medium text-gray-900 dark:text-white">{{ formatRemaining(account.remaining_seconds) }}</p>
+                    </div>
+                    <div class="rounded-md bg-white px-3 py-2 dark:bg-dark-800">
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.resetAt') }}</p>
+                      <p class="mt-1 truncate text-sm font-medium text-gray-900 dark:text-white">{{ formatDateTime(account.rate_limit_reset_at) }}</p>
+                    </div>
+                  </div>
+                </article>
+              </div>
             </div>
           </div>
-        </div>
-
-        <div v-if="lastScanResult" class="rounded-lg border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-primary-800 dark:border-primary-900/50 dark:bg-primary-900/20 dark:text-primary-200">
-          {{ t('admin.oauthSleeper.scanResult', { scanned: lastScanResult.scanned, triggered: lastScanResult.triggered }) }}
         </div>
 
         <div class="card">
@@ -327,7 +280,6 @@ import { adminAPI } from '@/api/admin'
 import type { AdminGroup } from '@/types'
 import type {
   OAuthSleeperEvent,
-  OAuthSleeperScanResult,
   OAuthSleeperSettings,
   OAuthSleeperStatus,
 } from '@/api/admin/oauthSleeper'
@@ -349,8 +301,6 @@ const defaultSettings: OAuthSleeperSettings = {
   enabled: false,
   threshold_percent: 90,
   group_threshold_percent: {},
-  scan_interval_seconds: 300,
-  max_sleep_per_scan: 3,
   include_openai: true,
   include_anthropic: true,
   group_ids: [],
@@ -358,14 +308,12 @@ const defaultSettings: OAuthSleeperSettings = {
 
 const loading = ref(false)
 const saving = ref(false)
-const scanning = ref(false)
 const eventsLoading = ref(false)
 const status = ref<OAuthSleeperStatus | null>(null)
 const savedSettings = ref<OAuthSleeperSettings>({ ...defaultSettings })
 const settingsForm = reactive<OAuthSleeperSettings>({ ...defaultSettings })
 const events = ref<OAuthSleeperEvent[]>([])
 const groups = ref<AdminGroup[]>([])
-const lastScanResult = ref<OAuthSleeperScanResult | null>(null)
 const pagination = reactive({
   page: 1,
   page_size: getPersistedPageSize(),
@@ -390,15 +338,15 @@ const overviewItems = computed(() => [
     key: 'threshold',
     label: t('admin.oauthSleeper.overview.threshold'),
     value: formatPercent(status.value?.threshold_percent ?? settingsForm.threshold_percent),
-    badge: isAccelerated.value ? t('admin.oauthSleeper.accelerated') : undefined,
-    badgeClass: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
-    meta: effectiveIntervalText.value,
+    meta: t('admin.oauthSleeper.thresholdMeta', {
+      threshold: formatPercent(status.value?.threshold_percent ?? settingsForm.threshold_percent),
+    }),
     icon: 'chart' as const,
     iconClass: 'bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:text-sky-300',
   },
   {
     key: 'lastScan',
-    label: t('admin.oauthSleeper.overview.lastScan'),
+    label: t('admin.oauthSleeper.overview.lastCheck'),
     value: formatDateTime(status.value?.last_scan_at),
     meta: t('admin.oauthSleeper.lastScanMeta', {
       scanned: status.value?.last_scanned ?? 0,
@@ -411,7 +359,7 @@ const overviewItems = computed(() => [
     key: 'sleeping',
     label: t('admin.oauthSleeper.overview.sleeping'),
     value: String(status.value?.sleeping_accounts?.length ?? 0),
-    meta: t('admin.oauthSleeper.maxPerGroupMeta', { count: status.value?.max_sleep_per_scan ?? settingsForm.max_sleep_per_scan }),
+    meta: t('admin.oauthSleeper.sleepingCount', { count: status.value?.sleeping_accounts?.length ?? 0 }),
     icon: 'ban' as const,
     iconClass: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300',
   },
@@ -444,38 +392,6 @@ const groupScopeText = computed(() => {
   return t('admin.oauthSleeper.groupScopeMeta', { count: names.length, names: names.slice(0, 2).join(' / ') })
 })
 
-const isAccelerated = computed(() =>
-  Boolean(status.value?.accelerated_until && (status.value?.accelerated_group_ids?.length ?? 0) > 0)
-)
-
-const acceleratedGroupNames = computed(() => {
-  const namesByID = new Map(groups.value.map((group) => [group.id, group.name]))
-  return (status.value?.accelerated_group_ids ?? []).map((groupID) => namesByID.get(groupID) ?? `#${groupID}`)
-})
-
-const acceleratedScopeText = computed(() => {
-  const names = acceleratedGroupNames.value
-  if (names.length === 0) return t('admin.oauthSleeper.noGroupSelected')
-  if (names.length <= 2) return names.join(' / ')
-  return t('admin.oauthSleeper.acceleratedGroupScopeMeta', { count: names.length, names: names.slice(0, 2).join(' / ') })
-})
-
-const accelerationMetaText = computed(() =>
-  t('admin.oauthSleeper.acceleratedUntilMeta', {
-    names: acceleratedScopeText.value,
-    time: formatDateTime(status.value?.accelerated_until),
-  })
-)
-
-const effectiveIntervalText = computed(() => {
-  const configured = status.value?.scan_interval_seconds ?? settingsForm.scan_interval_seconds
-  const effective = status.value?.effective_scan_interval_seconds ?? configured
-  if (effective < configured) {
-    return t('admin.oauthSleeper.effectiveIntervalAcceleratedMeta', { configured, effective })
-  }
-  return t('admin.oauthSleeper.effectiveIntervalMeta', { configured, effective })
-})
-
 function applySettings(settings: OAuthSleeperSettings) {
   const normalized = {
     ...defaultSettings,
@@ -505,8 +421,6 @@ function buildSettingsPayload(): OAuthSleeperSettings {
     enabled: settingsForm.enabled,
     threshold_percent: Number(settingsForm.threshold_percent),
     group_threshold_percent: groupThresholds,
-    scan_interval_seconds: Number(settingsForm.scan_interval_seconds),
-    max_sleep_per_scan: Number(settingsForm.max_sleep_per_scan),
     include_openai: settingsForm.include_openai,
     include_anthropic: settingsForm.include_anthropic,
     group_ids: [...settingsForm.group_ids],
@@ -581,22 +495,6 @@ async function saveSettings() {
     appStore.showError(extractApiErrorMessage(err, t('admin.oauthSleeper.saveFailed')))
   } finally {
     saving.value = false
-  }
-}
-
-async function runScanOnce() {
-  if (scanning.value) return
-  scanning.value = true
-  try {
-    const result = await adminAPI.oauthSleeper.scanOnce()
-    lastScanResult.value = result
-    appStore.showSuccess(t('admin.oauthSleeper.scanSuccess', { triggered: result.triggered }))
-    pagination.page = 1
-    await Promise.all([loadStatus(), loadEvents()])
-  } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('admin.oauthSleeper.scanFailed')))
-  } finally {
-    scanning.value = false
   }
 }
 

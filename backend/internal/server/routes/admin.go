@@ -107,7 +107,6 @@ func registerOAuthSleeperRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		sleeper.GET("/status", h.Admin.OAuthSleeper.GetStatus)
 		sleeper.GET("/settings", h.Admin.OAuthSleeper.GetSettings)
 		sleeper.PUT("/settings", h.Admin.OAuthSleeper.UpdateSettings)
-		sleeper.POST("/scan-once", h.Admin.OAuthSleeper.ScanOnce)
 		sleeper.GET("/events", h.Admin.OAuthSleeper.ListEvents)
 	}
 }

@@ -11,7 +11,6 @@ const {
   getStatus,
   getSettings,
   updateSettings,
-  scanOnce,
   listEvents,
   getAllGroups,
   showError,
@@ -20,7 +19,6 @@ const {
   getStatus: vi.fn(),
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
-  scanOnce: vi.fn(),
   listEvents: vi.fn(),
   getAllGroups: vi.fn(),
   showError: vi.fn(),
@@ -33,7 +31,6 @@ vi.mock('@/api/admin', () => ({
       getStatus,
       getSettings,
       updateSettings,
-      scanOnce,
       listEvents,
     },
     groups: {
@@ -68,8 +65,8 @@ vi.mock('vue-i18n', async () => {
     useI18n: () => ({
       t: (key: string, params?: Record<string, string | number>) => {
         const messages: Record<string, string> = {
-          'admin.oauthSleeper.acceleratedUntilMeta': '{names} until {time}',
-          'admin.oauthSleeper.effectiveIntervalAcceleratedMeta': '{configured}s to {effective}s',
+          'admin.oauthSleeper.lastScanMeta': 'Checked {scanned}, triggered {triggered}',
+          'admin.oauthSleeper.sleepingCount': '{count} sleeping',
         }
         return (messages[key] ?? key).replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`))
       },
@@ -81,8 +78,6 @@ const baseSettings = (): OAuthSleeperSettings => ({
   enabled: false,
   threshold_percent: 90,
   group_threshold_percent: {},
-  scan_interval_seconds: 300,
-  max_sleep_per_scan: 3,
   include_openai: true,
   include_anthropic: true,
   group_ids: [1],
@@ -90,8 +85,6 @@ const baseSettings = (): OAuthSleeperSettings => ({
 
 const baseStatus = (): OAuthSleeperStatus => ({
   ...baseSettings(),
-  effective_scan_interval_seconds: 300,
-  accelerated_group_ids: [],
   last_scan_at: '2026-05-24T00:00:00Z',
   last_scanned: 2,
   last_triggered: 1,
@@ -110,18 +103,11 @@ function mountView(): VueWrapper {
   })
 }
 
-function findButtonByText(wrapper: VueWrapper, text: string) {
-  const button = wrapper.findAll('button').find((item) => item.text().includes(text))
-  if (!button) throw new Error(`button not found: ${text}`)
-  return button
-}
-
 describe('admin OAuthSleeperView', () => {
   beforeEach(() => {
     getStatus.mockReset()
     getSettings.mockReset()
     updateSettings.mockReset()
-    scanOnce.mockReset()
     listEvents.mockReset()
     getAllGroups.mockReset()
     showError.mockReset()
@@ -140,7 +126,6 @@ describe('admin OAuthSleeperView', () => {
     })
     listEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     updateSettings.mockImplementation(async (payload: OAuthSleeperSettings) => payload)
-    scanOnce.mockResolvedValue({ scanned: 2, triggered: 1, events: [] })
   })
 
   it('loads status, settings and empty event state', async () => {
@@ -155,22 +140,35 @@ describe('admin OAuthSleeperView', () => {
     expect(wrapper.text()).toContain('OpenAI group')
     expect(wrapper.text()).toContain('admin.oauthSleeper.noEvents')
     expect(wrapper.text()).toContain('admin.oauthSleeper.noSleepingAccounts')
+    expect(wrapper.text()).not.toContain('admin.oauthSleeper.scanOnce')
   })
 
-  it('shows accelerated scan status when backend reports active groups', async () => {
+  it('renders sleeping accounts as cards', async () => {
     getStatus.mockResolvedValueOnce({
       ...baseStatus(),
-      effective_scan_interval_seconds: 10,
-      accelerated_until: '2026-05-24T00:10:00Z',
-      accelerated_group_ids: [1],
+      sleeping_accounts: [
+        {
+          account_id: 9,
+          account_name: 'sleeping-openai',
+          platform: 'openai',
+          rate_limit_reset_at: '2026-05-24T01:00:00Z',
+          remaining_seconds: 3600,
+        },
+        {
+          account_id: 10,
+          account_name: 'sleeping-claude',
+          platform: 'anthropic',
+          rate_limit_reset_at: '2026-05-24T02:00:00Z',
+          remaining_seconds: 7200,
+        },
+      ],
     })
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('admin.oauthSleeper.acceleratedNoticeTitle')
-    expect(wrapper.text()).toContain('OpenAI group')
-    expect(wrapper.text()).toContain('2026-05-24T00:10:00Z')
-    expect(wrapper.text()).toContain('300s to 10s')
+    expect(wrapper.text()).toContain('sleeping-openai')
+    expect(wrapper.text()).toContain('sleeping-claude')
+    expect(wrapper.findAll('article')).toHaveLength(2)
   })
 
   it('saves settings payload from the form', async () => {
@@ -179,8 +177,6 @@ describe('admin OAuthSleeperView', () => {
 
     const inputs = wrapper.findAll('input[type="number"]')
     await inputs[0].setValue('96')
-    await inputs[1].setValue('600')
-    await inputs[2].setValue('2')
     await wrapper.findAll('button[role="switch"]')[0].trigger('click')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -189,8 +185,6 @@ describe('admin OAuthSleeperView', () => {
       enabled: true,
       threshold_percent: 96,
       group_threshold_percent: {},
-      scan_interval_seconds: 600,
-      max_sleep_per_scan: 2,
       include_openai: true,
       include_anthropic: true,
       group_ids: [1],
@@ -225,22 +219,6 @@ describe('admin OAuthSleeperView', () => {
       group_ids: [1],
       group_threshold_percent: { 1: 87 },
     }))
-  })
-
-  it('refreshes status and events after a manual scan', async () => {
-    const wrapper = mountView()
-    await flushPromises()
-
-    getStatus.mockClear()
-    listEvents.mockClear()
-
-    await findButtonByText(wrapper, 'admin.oauthSleeper.scanOnce').trigger('click')
-    await flushPromises()
-
-    expect(scanOnce).toHaveBeenCalledTimes(1)
-    expect(getStatus).toHaveBeenCalledTimes(1)
-    expect(listEvents).toHaveBeenCalledWith({ page: 1, page_size: 20 })
-    expect(showSuccess).toHaveBeenCalledWith('admin.oauthSleeper.scanSuccess')
   })
 
   it('shows an error when saving with no platform enabled', async () => {

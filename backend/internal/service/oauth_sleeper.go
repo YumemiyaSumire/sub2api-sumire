@@ -21,18 +21,10 @@ const (
 	defaultOAuthSleeperScanIntervalSecond = 300
 	defaultOAuthSleeperMaxSleepPerScan    = 3
 
-	oauthSleeperMinThresholdPercent   = 1
-	oauthSleeperMaxThresholdPercent   = 100
-	oauthSleeperMinScanIntervalSecond = 30
-	oauthSleeperMaxScanIntervalSecond = 86400
-	oauthSleeperMinSleepPerScan       = 1
-	oauthSleeperMaxSleepPerScan       = 100
+	oauthSleeperMinThresholdPercent = 1
+	oauthSleeperMaxThresholdPercent = 100
 
 	oauthSleeperStatusAccountsLimit = 20
-
-	oauthSleeperAccelerationNearThresholdMarginPercent = 1
-	oauthSleeperAccelerationDuration                   = 10 * time.Minute
-	oauthSleeperAccelerationInterval                   = 10 * time.Second
 
 	OAuthSleeperExtraSleepKey       = "oauth_sleeper_sleep"
 	OAuthSleeperExtraStickyGraceKey = "oauth_sleeper_sticky_grace_until"
@@ -56,30 +48,23 @@ type OAuthSleeperSettings struct {
 	Enabled               bool              `json:"enabled"`
 	ThresholdPercent      float64           `json:"threshold_percent"`
 	GroupThresholdPercent map[int64]float64 `json:"group_threshold_percent"`
-	ScanIntervalSeconds   int               `json:"scan_interval_seconds"`
-	MaxSleepPerScan       int               `json:"max_sleep_per_scan"`
 	IncludeOpenAI         bool              `json:"include_openai"`
 	IncludeAnthropic      bool              `json:"include_anthropic"`
 	GroupIDs              []int64           `json:"group_ids"`
 }
 
 type OAuthSleeperStatus struct {
-	Enabled                      bool                          `json:"enabled"`
-	ThresholdPercent             float64                       `json:"threshold_percent"`
-	GroupThresholdPercent        map[int64]float64             `json:"group_threshold_percent"`
-	ScanIntervalSeconds          int                           `json:"scan_interval_seconds"`
-	EffectiveScanIntervalSeconds int                           `json:"effective_scan_interval_seconds"`
-	MaxSleepPerScan              int                           `json:"max_sleep_per_scan"`
-	IncludeOpenAI                bool                          `json:"include_openai"`
-	IncludeAnthropic             bool                          `json:"include_anthropic"`
-	GroupIDs                     []int64                       `json:"group_ids"`
-	AcceleratedUntil             *time.Time                    `json:"accelerated_until,omitempty"`
-	AcceleratedGroupIDs          []int64                       `json:"accelerated_group_ids"`
-	LastScanAt                   *time.Time                    `json:"last_scan_at,omitempty"`
-	LastScanned                  int                           `json:"last_scanned"`
-	LastTriggered                int                           `json:"last_triggered"`
-	LastError                    string                        `json:"last_error,omitempty"`
-	SleepingAccounts             []OAuthSleeperSleepingAccount `json:"sleeping_accounts"`
+	Enabled               bool                          `json:"enabled"`
+	ThresholdPercent      float64                       `json:"threshold_percent"`
+	GroupThresholdPercent map[int64]float64             `json:"group_threshold_percent"`
+	IncludeOpenAI         bool                          `json:"include_openai"`
+	IncludeAnthropic      bool                          `json:"include_anthropic"`
+	GroupIDs              []int64                       `json:"group_ids"`
+	LastScanAt            *time.Time                    `json:"last_scan_at,omitempty"`
+	LastScanned           int                           `json:"last_scanned"`
+	LastTriggered         int                           `json:"last_triggered"`
+	LastError             string                        `json:"last_error,omitempty"`
+	SleepingAccounts      []OAuthSleeperSleepingAccount `json:"sleeping_accounts"`
 }
 
 type OAuthSleeperScanResult struct {
@@ -133,9 +118,6 @@ type OAuthSleeperService struct {
 	lastScanned   int
 	lastTriggered int
 	lastError     string
-
-	accelerationMu   sync.Mutex
-	acceleratedUntil map[int64]time.Time
 }
 
 type oauthSleeperCandidate struct {
@@ -151,8 +133,6 @@ func DefaultOAuthSleeperSettings() *OAuthSleeperSettings {
 		Enabled:               false,
 		ThresholdPercent:      defaultOAuthSleeperThresholdPercent,
 		GroupThresholdPercent: map[int64]float64{},
-		ScanIntervalSeconds:   defaultOAuthSleeperScanIntervalSecond,
-		MaxSleepPerScan:       defaultOAuthSleeperMaxSleepPerScan,
 		IncludeOpenAI:         true,
 		IncludeAnthropic:      true,
 		GroupIDs:              []int64{},
@@ -161,11 +141,10 @@ func DefaultOAuthSleeperSettings() *OAuthSleeperSettings {
 
 func NewOAuthSleeperService(repo OAuthSleeperRepository, settingRepo SettingRepository) *OAuthSleeperService {
 	return &OAuthSleeperService{
-		repo:             repo,
-		settingRepo:      settingRepo,
-		now:              func() time.Time { return time.Now().UTC() },
-		stopCh:           make(chan struct{}),
-		acceleratedUntil: make(map[int64]time.Time),
+		repo:        repo,
+		settingRepo: settingRepo,
+		now:         func() time.Time { return time.Now().UTC() },
+		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -253,12 +232,6 @@ func ValidateOAuthSleeperSettings(settings *OAuthSleeperSettings) error {
 			return ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "group_threshold_percent", "reason": "must be between 1 and 100"})
 		}
 	}
-	if settings.ScanIntervalSeconds < oauthSleeperMinScanIntervalSecond || settings.ScanIntervalSeconds > oauthSleeperMaxScanIntervalSecond {
-		return ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "scan_interval_seconds", "reason": "must be between 30 and 86400"})
-	}
-	if settings.MaxSleepPerScan < oauthSleeperMinSleepPerScan || settings.MaxSleepPerScan > oauthSleeperMaxSleepPerScan {
-		return ErrOAuthSleeperInvalidSettings.WithMetadata(map[string]string{"field": "max_sleep_per_scan", "reason": "must be between 1 and 100"})
-	}
 	return nil
 }
 
@@ -276,7 +249,6 @@ func (s *OAuthSleeperService) GetStatus(ctx context.Context) (*OAuthSleeperStatu
 		}
 	}
 
-	effectiveInterval, acceleratedUntil, acceleratedGroupIDs := s.oauthSleeperAccelerationStatus(*settings, s.now())
 	s.statusMu.RLock()
 	var lastScanAt *time.Time
 	if s.lastScanAt != nil {
@@ -288,32 +260,19 @@ func (s *OAuthSleeperService) GetStatus(ctx context.Context) (*OAuthSleeperStatu
 	lastError := s.lastError
 	s.statusMu.RUnlock()
 	status := &OAuthSleeperStatus{
-		Enabled:                      settings.Enabled,
-		ThresholdPercent:             settings.ThresholdPercent,
-		GroupThresholdPercent:        copyOAuthSleeperGroupThresholds(settings.GroupThresholdPercent),
-		ScanIntervalSeconds:          settings.ScanIntervalSeconds,
-		EffectiveScanIntervalSeconds: int(effectiveInterval / time.Second),
-		MaxSleepPerScan:              settings.MaxSleepPerScan,
-		IncludeOpenAI:                settings.IncludeOpenAI,
-		IncludeAnthropic:             settings.IncludeAnthropic,
-		GroupIDs:                     append([]int64(nil), settings.GroupIDs...),
-		AcceleratedUntil:             acceleratedUntil,
-		AcceleratedGroupIDs:          acceleratedGroupIDs,
-		LastScanAt:                   lastScanAt,
-		LastScanned:                  lastScanned,
-		LastTriggered:                lastTriggered,
-		LastError:                    lastError,
-		SleepingAccounts:             sleeping,
+		Enabled:               settings.Enabled,
+		ThresholdPercent:      settings.ThresholdPercent,
+		GroupThresholdPercent: copyOAuthSleeperGroupThresholds(settings.GroupThresholdPercent),
+		IncludeOpenAI:         settings.IncludeOpenAI,
+		IncludeAnthropic:      settings.IncludeAnthropic,
+		GroupIDs:              append([]int64(nil), settings.GroupIDs...),
+		LastScanAt:            lastScanAt,
+		LastScanned:           lastScanned,
+		LastTriggered:         lastTriggered,
+		LastError:             lastError,
+		SleepingAccounts:      sleeping,
 	}
 	return status, nil
-}
-
-func (s *OAuthSleeperService) ScanOnce(ctx context.Context) (*OAuthSleeperScanResult, error) {
-	settings, err := s.GetSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.runScan(ctx, *settings)
 }
 
 func (s *OAuthSleeperService) ListEvents(ctx context.Context, params pagination.PaginationParams) ([]OAuthSleeperEvent, *pagination.PaginationResult, error) {
@@ -330,7 +289,7 @@ func (s *OAuthSleeperService) loop() {
 		if err != nil {
 			s.recordScanStatus(0, 0, err)
 		} else if settings.Enabled {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(settings.ScanIntervalSeconds)*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(defaultOAuthSleeperScanIntervalSecond)*time.Second)
 			_, err := s.runScan(ctx, *settings)
 			cancel()
 			if err != nil {
@@ -339,9 +298,6 @@ func (s *OAuthSleeperService) loop() {
 		}
 
 		interval := time.Duration(defaultOAuthSleeperScanIntervalSecond) * time.Second
-		if settings != nil && settings.ScanIntervalSeconds > 0 {
-			interval = s.effectiveScanInterval(*settings, s.now())
-		}
 
 		timer := time.NewTimer(interval)
 		select {
@@ -417,7 +373,7 @@ func (s *OAuthSleeperService) runScan(ctx context.Context, settings OAuthSleeper
 		sortOAuthSleeperCandidates(platformCandidates)
 		for _, candidate := range platformCandidates {
 			candidateGroupIDs := oauthSleeperSelectedAccountGroupIDs(candidate.account.GroupIDs, groupIDSet)
-			if len(candidateGroupIDs) == 0 || oauthSleeperAnyGroupAtLimit(candidateGroupIDs, triggeredByGroup, settings.MaxSleepPerScan) {
+			if len(candidateGroupIDs) == 0 || oauthSleeperAnyGroupAtLimit(candidateGroupIDs, triggeredByGroup, defaultOAuthSleeperMaxSleepPerScan) {
 				continue
 			}
 			event := OAuthSleeperEvent{
@@ -467,7 +423,7 @@ func (s *OAuthSleeperService) observeAccountUsageSnapshotUpdated(accountID int64
 	settings, err := s.GetSettings(context.Background())
 	if err != nil || settings == nil || !settings.Enabled {
 		if err != nil {
-			slog.Debug("oauth_sleeper: skip acceleration after usage snapshot because settings could not be loaded", "error", err)
+			slog.Debug("oauth_sleeper: skip automatic account evaluation after usage snapshot because settings could not be loaded", "error", err)
 		}
 		return
 	}
@@ -476,91 +432,73 @@ func (s *OAuthSleeperService) observeAccountUsageSnapshotUpdated(accountID int64
 	}
 	account, err := s.repo.GetOAuthSleeperAccount(context.Background(), accountID)
 	if err != nil {
-		slog.Debug("oauth_sleeper: skip acceleration after usage snapshot because account could not be loaded", "account_id", accountID, "error", err)
+		slog.Debug("oauth_sleeper: skip automatic account evaluation after usage snapshot because account could not be loaded", "account_id", accountID, "error", err)
 		return
 	}
-	if account == nil || !oauthSleeperAccountNearThreshold(*account, *settings, s.now()) {
+	if account == nil {
+		return
+	}
+	groups, err := s.resolveOAuthSleeperGroups(context.Background(), *settings)
+	if err != nil {
+		slog.Debug("oauth_sleeper: skip automatic account evaluation after usage snapshot because groups could not be resolved", "account_id", accountID, "error", err)
+		return
+	}
+	settings.GroupIDs = oauthSleeperGroupIDs(groups)
+	if len(settings.GroupIDs) == 0 {
 		return
 	}
 	selectedGroups := oauthSleeperSelectedAccountGroupIDs(account.GroupIDs, int64Set(settings.GroupIDs))
 	if len(selectedGroups) == 0 || (sourceGroupID > 0 && !int64SetContains(selectedGroups, sourceGroupID)) {
 		return
 	}
-	s.recordUsageNearThreshold(selectedGroups, s.now())
-}
-
-func (s *OAuthSleeperService) recordUsageNearThreshold(groupIDs []int64, now time.Time) {
-	if s == nil || len(groupIDs) == 0 {
-		return
-	}
-	now = now.UTC()
-	until := now.Add(oauthSleeperAccelerationDuration)
-
-	s.accelerationMu.Lock()
-	defer s.accelerationMu.Unlock()
-	if s.acceleratedUntil == nil {
-		s.acceleratedUntil = make(map[int64]time.Time)
-	}
-	for _, groupID := range normalizeOAuthSleeperGroupIDs(groupIDs) {
-		s.acceleratedUntil[groupID] = until
+	if _, err := s.runScanForAccount(context.Background(), *settings, *account); err != nil {
+		slog.Debug("oauth_sleeper: automatic account evaluation after usage snapshot failed", "account_id", accountID, "error", err)
 	}
 }
 
-func (s *OAuthSleeperService) effectiveScanInterval(settings OAuthSleeperSettings, now time.Time) time.Duration {
+func (s *OAuthSleeperService) runScanForAccount(ctx context.Context, settings OAuthSleeperSettings, account Account) (bool, error) {
+	if s == nil || s.repo == nil {
+		return false, fmt.Errorf("oauth sleeper service is not initialized")
+	}
 	normalizeOAuthSleeperSettingsForRead(&settings)
-	configured := time.Duration(settings.ScanIntervalSeconds) * time.Second
-	if configured <= 0 {
-		configured = time.Duration(defaultOAuthSleeperScanIntervalSecond) * time.Second
+	if err := ValidateOAuthSleeperSettings(&settings); err != nil {
+		return false, err
 	}
-	if !settings.Enabled {
-		return configured
+
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+
+	now := s.now()
+	candidate, ok := evaluateOAuthSleeperAccount(account, settings, now)
+	if !ok {
+		s.recordScanStatusAt(now, 1, 0, nil)
+		return false, nil
 	}
-	if !s.hasAcceleratedGroup(settings.GroupIDs, now) || configured <= oauthSleeperAccelerationInterval {
-		return configured
+	groupIDSet := int64Set(settings.GroupIDs)
+	if len(oauthSleeperSelectedAccountGroupIDs(candidate.account.GroupIDs, groupIDSet)) == 0 {
+		s.recordScanStatusAt(now, 1, 0, nil)
+		return false, nil
 	}
-	return oauthSleeperAccelerationInterval
-}
-
-func (s *OAuthSleeperService) oauthSleeperAccelerationStatus(settings OAuthSleeperSettings, now time.Time) (time.Duration, *time.Time, []int64) {
-	interval := s.effectiveScanInterval(settings, now)
-	groupIDs, until := s.acceleratedGroups(settings.GroupIDs, now)
-	return interval, until, groupIDs
-}
-
-func (s *OAuthSleeperService) hasAcceleratedGroup(groupIDs []int64, now time.Time) bool {
-	groupIDs, _ = s.acceleratedGroups(groupIDs, now)
-	return len(groupIDs) > 0
-}
-
-func (s *OAuthSleeperService) acceleratedGroups(groupIDs []int64, now time.Time) ([]int64, *time.Time) {
-	if s == nil || len(groupIDs) == 0 {
-		return []int64{}, nil
+	event := OAuthSleeperEvent{
+		AccountID:          candidate.account.ID,
+		AccountName:        candidate.account.Name,
+		Platform:           candidate.account.Platform,
+		Window:             candidate.window,
+		UtilizationPercent: candidate.utilizationPercent,
+		ThresholdPercent:   candidate.thresholdPercent,
+		ResetAt:            candidate.resetAt,
 	}
-	now = now.UTC()
-	selected := int64Set(normalizeOAuthSleeperGroupIDs(groupIDs))
-
-	s.accelerationMu.Lock()
-	defer s.accelerationMu.Unlock()
-
-	out := make([]int64, 0, len(selected))
-	var latest *time.Time
-	for groupID := range selected {
-		until, ok := s.acceleratedUntil[groupID]
-		if !ok || !until.After(now) {
-			if ok {
-				delete(s.acceleratedUntil, groupID)
-			}
-			continue
-		}
-		until = until.UTC()
-		out = append(out, groupID)
-		if latest == nil || until.After(*latest) {
-			cp := until
-			latest = &cp
-		}
+	updated, err := s.repo.CreateOAuthSleeperEventAfterRateLimit(ctx, &event)
+	if err != nil {
+		s.recordScanStatusAt(now, 1, 0, err)
+		return false, fmt.Errorf("create oauth sleeper event after usage snapshot: account=%d platform=%s: %w", candidate.account.ID, candidate.account.Platform, err)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out, latest
+	triggered := 0
+	if updated {
+		triggered = 1
+	}
+	s.recordScanStatusAt(now, 1, triggered, nil)
+	return updated, nil
 }
 
 func (s *OAuthSleeperService) recordScanStatus(scanned, triggered int, err error) {
@@ -589,12 +527,6 @@ func normalizeOAuthSleeperSettingsForRead(settings *OAuthSleeperSettings) {
 		settings.ThresholdPercent = defaultOAuthSleeperThresholdPercent
 	}
 	settings.GroupThresholdPercent = normalizeOAuthSleeperGroupThresholds(settings.GroupThresholdPercent)
-	if settings.ScanIntervalSeconds <= 0 {
-		settings.ScanIntervalSeconds = defaultOAuthSleeperScanIntervalSecond
-	}
-	if settings.MaxSleepPerScan <= 0 {
-		settings.MaxSleepPerScan = defaultOAuthSleeperMaxSleepPerScan
-	}
 	settings.GroupIDs = normalizeOAuthSleeperGroupIDs(settings.GroupIDs)
 }
 
@@ -808,16 +740,6 @@ func evaluateOAuthSleeperAccountWithThreshold(account Account, settings OAuthSle
 	}
 	sortOAuthSleeperCandidatesByReset(candidates)
 	return candidates[0], true
-}
-
-func oauthSleeperAccountNearThreshold(account Account, settings OAuthSleeperSettings, now time.Time) bool {
-	normalizeOAuthSleeperSettingsForRead(&settings)
-	threshold := oauthSleeperEffectiveThresholdForAccount(account, settings) - oauthSleeperAccelerationNearThresholdMarginPercent
-	if threshold < oauthSleeperMinThresholdPercent {
-		threshold = oauthSleeperMinThresholdPercent
-	}
-	_, ok := evaluateOAuthSleeperAccountWithThreshold(account, settings, threshold, now)
-	return ok
 }
 
 func oauthSleeperEffectiveThresholdForAccount(account Account, settings OAuthSleeperSettings) float64 {

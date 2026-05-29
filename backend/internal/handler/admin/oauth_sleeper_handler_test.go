@@ -162,7 +162,6 @@ func setupOAuthSleeperHandlerRouter(repo *oauthSleeperHandlerRepoStub, settingRe
 	router.GET("/admin/oauth-sleeper/status", handler.GetStatus)
 	router.GET("/admin/oauth-sleeper/settings", handler.GetSettings)
 	router.PUT("/admin/oauth-sleeper/settings", handler.UpdateSettings)
-	router.POST("/admin/oauth-sleeper/scan-once", handler.ScanOnce)
 	router.GET("/admin/oauth-sleeper/events", handler.ListEvents)
 	return router
 }
@@ -186,16 +185,13 @@ func TestOAuthSleeperHandlerSettingsDefaultAndUpdate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
 	require.False(t, getResp.Data.Enabled)
 	require.Equal(t, 90.0, getResp.Data.ThresholdPercent)
-	require.Equal(t, 300, getResp.Data.ScanIntervalSeconds)
 
 	payload := service.OAuthSleeperSettings{
-		Enabled:             true,
-		ThresholdPercent:    90,
-		ScanIntervalSeconds: 120,
-		MaxSleepPerScan:     5,
-		IncludeOpenAI:       true,
-		IncludeAnthropic:    false,
-		GroupIDs:            []int64{1},
+		Enabled:          true,
+		ThresholdPercent: 90,
+		IncludeOpenAI:    true,
+		IncludeAnthropic: false,
+		GroupIDs:         []int64{1},
 		GroupThresholdPercent: map[int64]float64{
 			1: 88,
 		},
@@ -223,8 +219,6 @@ func TestOAuthSleeperHandlerRejectsInvalidSettings(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/admin/oauth-sleeper/settings", bytes.NewBufferString(`{
 		"enabled": true,
 		"threshold_percent": 101,
-		"scan_interval_seconds": 120,
-		"max_sleep_per_scan": 5,
 		"include_openai": true,
 		"include_anthropic": true
 	}`))
@@ -235,54 +229,25 @@ func TestOAuthSleeperHandlerRejectsInvalidSettings(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestOAuthSleeperHandlerScanOnceAndEvents(t *testing.T) {
+func TestOAuthSleeperHandlerEvents(t *testing.T) {
 	resetAt := time.Now().UTC().Add(time.Hour)
 	repo := &oauthSleeperHandlerRepoStub{
 		groups: []service.OAuthSleeperGroup{{ID: 1, Name: "OpenAI", Platform: service.PlatformOpenAI}},
-		accounts: []service.Account{
+		events: []service.OAuthSleeperEvent{
 			{
-				ID:       7,
-				Name:     "openai-oauth",
-				Platform: service.PlatformOpenAI,
-				Type:     service.AccountTypeOAuth,
-				Status:   service.StatusActive,
-				GroupIDs: []int64{1},
-				Extra: map[string]any{
-					"codex_5h_used_percent": 99.0,
-					"codex_5h_reset_at":     resetAt.Format(time.RFC3339),
-				},
+				ID:                 1,
+				AccountID:          7,
+				AccountName:        "openai-oauth",
+				Platform:           service.PlatformOpenAI,
+				Window:             "codex_5h",
+				UtilizationPercent: 99,
+				ThresholdPercent:   95,
+				ResetAt:            resetAt,
+				CreatedAt:          time.Now().UTC(),
 			},
 		},
 	}
-	settings := service.OAuthSleeperSettings{
-		Enabled:             true,
-		ThresholdPercent:    95,
-		ScanIntervalSeconds: 300,
-		MaxSleepPerScan:     3,
-		IncludeOpenAI:       true,
-		IncludeAnthropic:    true,
-		GroupIDs:            []int64{1},
-	}
-	rawSettings, err := json.Marshal(settings)
-	require.NoError(t, err)
-	router := setupOAuthSleeperHandlerRouter(repo, &oauthSleeperHandlerSettingRepoStub{
-		data: map[string]string{service.SettingKeyOAuthSleeperSettings: string(rawSettings)},
-	})
-
-	scanReq := httptest.NewRequest(http.MethodPost, "/admin/oauth-sleeper/scan-once", nil)
-	scanRec := httptest.NewRecorder()
-	router.ServeHTTP(scanRec, scanReq)
-	require.Equal(t, http.StatusOK, scanRec.Code)
-
-	var scanResp struct {
-		Code int                            `json:"code"`
-		Data service.OAuthSleeperScanResult `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(scanRec.Body.Bytes(), &scanResp))
-	require.Equal(t, 1, scanResp.Data.Scanned)
-	require.Equal(t, 1, scanResp.Data.Triggered)
-	require.Len(t, scanResp.Data.Events, 1)
-	require.Equal(t, "openai-oauth", scanResp.Data.Events[0].AccountName)
+	router := setupOAuthSleeperHandlerRouter(repo, &oauthSleeperHandlerSettingRepoStub{})
 
 	eventsReq := httptest.NewRequest(http.MethodGet, "/admin/oauth-sleeper/events?page=2&page_size=10", nil)
 	eventsRec := httptest.NewRecorder()

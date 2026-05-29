@@ -7,8 +7,6 @@ export interface OAuthSleeperSettings {
   enabled: boolean
   threshold_percent: number
   group_threshold_percent: Record<number, number>
-  scan_interval_seconds: number
-  max_sleep_per_scan: number
   include_openai: boolean
   include_anthropic: boolean
   group_ids: number[]
@@ -23,9 +21,6 @@ export interface OAuthSleeperSleepingAccount {
 }
 
 export interface OAuthSleeperStatus extends OAuthSleeperSettings {
-  effective_scan_interval_seconds: number
-  accelerated_until?: string
-  accelerated_group_ids: number[]
   last_scan_at?: string
   last_scanned: number
   last_triggered: number
@@ -44,12 +39,6 @@ export interface OAuthSleeperEvent {
   reset_at: string
   previous_rate_limit_reset_at?: string | null
   created_at: string
-}
-
-export interface OAuthSleeperScanResult {
-  scanned: number
-  triggered: number
-  events: OAuthSleeperEvent[]
 }
 
 export interface OAuthSleeperEventsParams {
@@ -74,11 +63,6 @@ export async function updateSettings(
   return data
 }
 
-export async function scanOnce(): Promise<OAuthSleeperScanResult> {
-  const { data } = await apiClient.post<OAuthSleeperScanResult>('/admin/oauth-sleeper/scan-once')
-  return data
-}
-
 export async function listEvents(
   params: OAuthSleeperEventsParams = {}
 ): Promise<PaginatedResponse<OAuthSleeperEvent>> {
@@ -93,7 +77,6 @@ export const oauthSleeperAPI = {
   getStatus,
   getSettings,
   updateSettings,
-  scanOnce,
   listEvents,
 }
 

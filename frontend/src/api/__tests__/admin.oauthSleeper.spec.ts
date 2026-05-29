@@ -1,16 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { get, put, post } = vi.hoisted(() => ({
+const { get, put } = vi.hoisted(() => ({
   get: vi.fn(),
   put: vi.fn(),
-  post: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
   apiClient: {
     get,
     put,
-    post,
   },
 }))
 
@@ -20,7 +18,6 @@ describe('admin oauthSleeper api', () => {
   beforeEach(() => {
     get.mockReset()
     put.mockReset()
-    post.mockReset()
   })
 
   it('fetches status and settings from the admin oauth sleeper endpoints', async () => {
@@ -42,29 +39,20 @@ describe('admin oauthSleeper api', () => {
     expect(get).toHaveBeenNthCalledWith(2, '/admin/oauth-sleeper/settings')
   })
 
-  it('saves settings and runs manual scans with backend-compatible routes', async () => {
+  it('saves settings with backend-compatible routes', async () => {
     const payload: OAuthSleeperSettings = {
       enabled: true,
       threshold_percent: 96,
       group_threshold_percent: { 1: 88 },
-      scan_interval_seconds: 300,
-      max_sleep_per_scan: 2,
       include_openai: true,
       include_anthropic: false,
       group_ids: [1],
     }
     put.mockResolvedValue({ data: payload })
-    post.mockResolvedValue({ data: { scanned: 4, triggered: 1, events: [] } })
 
     await expect(oauthSleeperAPI.updateSettings(payload)).resolves.toEqual(payload)
-    await expect(oauthSleeperAPI.scanOnce()).resolves.toEqual({
-      scanned: 4,
-      triggered: 1,
-      events: [],
-    })
 
     expect(put).toHaveBeenCalledWith('/admin/oauth-sleeper/settings', payload)
-    expect(post).toHaveBeenCalledWith('/admin/oauth-sleeper/scan-once')
   })
 
   it('lists events with pagination params', async () => {
