@@ -169,31 +169,38 @@
               >
                 {{ t('admin.oauthSleeper.noSleepingAccounts') }}
               </div>
-              <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+              <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 <article
                   v-for="account in status?.sleeping_accounts ?? []"
                   :key="account.account_id"
-                  class="rounded-lg border border-gray-100 bg-gray-50/60 p-4 shadow-sm transition hover:border-primary-200 hover:bg-white dark:border-dark-700 dark:bg-dark-900/40 dark:hover:border-primary-900/60 dark:hover:bg-dark-800"
+                  class="group rounded-lg border border-gray-100 bg-white p-3 shadow-sm transition hover:border-primary-200 hover:shadow-md dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-primary-900/60"
                 >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <h3 class="truncate text-sm font-semibold text-gray-900 dark:text-white">
-                        {{ account.account_name || t('admin.oauthSleeper.unnamedAccount') }}
-                      </h3>
-                      <p class="mt-1 text-xs text-gray-400">#{{ account.account_id }}</p>
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-primary-50 text-sm font-semibold text-primary-700 dark:bg-primary-950/50 dark:text-primary-300">
+                        {{ accountAvatar(account) }}
+                      </div>
+                      <div class="min-w-0">
+                        <h3 class="truncate text-sm font-semibold text-gray-900 dark:text-white" :title="account.account_name || t('admin.oauthSleeper.unnamedAccount')">
+                          {{ account.account_name || t('admin.oauthSleeper.unnamedAccount') }}
+                        </h3>
+                        <p class="mt-0.5 text-xs text-gray-400">#{{ account.account_id }}</p>
+                      </div>
                     </div>
-                    <span class="inline-flex flex-shrink-0 rounded-md border px-2 py-1 text-xs font-medium" :class="platformBadgeClass(account.platform)">
+                    <span class="inline-flex flex-shrink-0 rounded-md border px-2 py-0.5 text-xs font-medium" :class="platformBadgeClass(account.platform)">
                       {{ platformLabel(account.platform) }}
                     </span>
                   </div>
-                  <div class="mt-4 grid grid-cols-2 gap-3">
-                    <div class="rounded-md bg-white px-3 py-2 dark:bg-dark-800">
-                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.remaining') }}</p>
-                      <p class="mt-1 truncate text-sm font-medium text-gray-900 dark:text-white">{{ formatRemaining(account.remaining_seconds) }}</p>
+                  <div class="mt-3 space-y-2 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800/80">
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.remaining') }}</span>
+                      <span class="text-sm font-medium text-gray-900 dark:text-white">{{ formatRemaining(account.remaining_seconds) }}</span>
                     </div>
-                    <div class="rounded-md bg-white px-3 py-2 dark:bg-dark-800">
-                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.resetAt') }}</p>
-                      <p class="mt-1 truncate text-sm font-medium text-gray-900 dark:text-white">{{ formatDateTime(account.rate_limit_reset_at) }}</p>
+                    <div class="flex items-start justify-between gap-3">
+                      <span class="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.oauthSleeper.table.resetAt') }}</span>
+                      <time class="min-w-0 whitespace-pre-line text-right text-sm font-medium leading-5 text-gray-900 dark:text-white" :datetime="account.rate_limit_reset_at">
+                        {{ formatCompactDateTime(account.rate_limit_reset_at) }}
+                      </time>
                     </div>
                   </div>
                 </article>
@@ -530,6 +537,18 @@ function onPageSizeChange(pageSize: number) {
 
 function formatDateTime(value: string | null | undefined): string {
   return formatDateTimeValue(value) || '-'
+}
+
+function formatCompactDateTime(value: string | null | undefined): string {
+  const formatted = formatDateTime(value)
+  if (formatted === '-') return formatted
+  return formatted.replace(/\s+/, '\n')
+}
+
+function accountAvatar(account: { account_name?: string; account_id: number }): string {
+  const name = String(account.account_name || '').trim()
+  if (name) return name.slice(0, 1).toUpperCase()
+  return String(account.account_id).slice(0, 2)
 }
 
 function formatPercent(value: number | null | undefined): string {

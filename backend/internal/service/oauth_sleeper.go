@@ -383,7 +383,7 @@ func (s *OAuthSleeperService) runScan(ctx context.Context, settings OAuthSleeper
 				Window:             candidate.window,
 				UtilizationPercent: candidate.utilizationPercent,
 				ThresholdPercent:   candidate.thresholdPercent,
-				ResetAt:            candidate.resetAt,
+				ResetAt:            oauthSleeperRecoveryResetAt(candidate.account, candidate.resetAt, now),
 			}
 			updated, err := s.repo.CreateOAuthSleeperEventAfterRateLimit(ctx, &event)
 			if err != nil {
@@ -486,7 +486,7 @@ func (s *OAuthSleeperService) runScanForAccount(ctx context.Context, settings OA
 		Window:             candidate.window,
 		UtilizationPercent: candidate.utilizationPercent,
 		ThresholdPercent:   candidate.thresholdPercent,
-		ResetAt:            candidate.resetAt,
+		ResetAt:            oauthSleeperRecoveryResetAt(candidate.account, candidate.resetAt, now),
 	}
 	updated, err := s.repo.CreateOAuthSleeperEventAfterRateLimit(ctx, &event)
 	if err != nil {
@@ -740,6 +740,32 @@ func evaluateOAuthSleeperAccountWithThreshold(account Account, settings OAuthSle
 	}
 	sortOAuthSleeperCandidatesByReset(candidates)
 	return candidates[0], true
+}
+
+func oauthSleeperRecoveryResetAt(account Account, fallback time.Time, now time.Time) time.Time {
+	if account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now) {
+		return account.RateLimitResetAt.UTC()
+	}
+
+	for _, key := range oauthSleeperAccountManagement7dResetKeys(account.Platform) {
+		resetAt, ok := extraTime(account.Extra, key)
+		if ok && resetAt.After(now) {
+			return resetAt.UTC()
+		}
+	}
+
+	return fallback.UTC()
+}
+
+func oauthSleeperAccountManagement7dResetKeys(platform string) []string {
+	switch platform {
+	case PlatformOpenAI:
+		return []string{"codex_7d_reset_at"}
+	case PlatformAnthropic:
+		return []string{"passive_usage_7d_reset"}
+	default:
+		return nil
+	}
 }
 
 func oauthSleeperEffectiveThresholdForAccount(account Account, settings OAuthSleeperSettings) float64 {

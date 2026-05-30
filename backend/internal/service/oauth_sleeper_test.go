@@ -252,6 +252,67 @@ func TestOAuthSleeperEvaluateAnthropicFraction(t *testing.T) {
 	require.Equal(t, passiveReset, candidate.resetAt)
 }
 
+func TestOAuthSleeperRecoveryResetAtUsesAccountManagementTimes(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	fallback := now.Add(2 * time.Hour)
+	existingRateLimit := now.Add(30 * time.Hour)
+	openAI7dReset := now.Add(20 * time.Hour)
+	anthropic7dReset := now.Add(18 * time.Hour)
+
+	require.Equal(t, existingRateLimit, oauthSleeperRecoveryResetAt(Account{
+		Platform:         PlatformOpenAI,
+		RateLimitResetAt: &existingRateLimit,
+		Extra: map[string]any{
+			"codex_7d_reset_at": openAI7dReset.Format(time.RFC3339),
+		},
+	}, fallback, now))
+
+	require.Equal(t, openAI7dReset, oauthSleeperRecoveryResetAt(Account{
+		Platform: PlatformOpenAI,
+		Extra: map[string]any{
+			"codex_7d_reset_at": openAI7dReset.Format(time.RFC3339),
+		},
+	}, fallback, now))
+
+	require.Equal(t, anthropic7dReset, oauthSleeperRecoveryResetAt(Account{
+		Platform: PlatformAnthropic,
+		Extra: map[string]any{
+			"passive_usage_7d_reset": anthropic7dReset.Unix(),
+		},
+	}, fallback, now))
+
+	require.Equal(t, fallback, oauthSleeperRecoveryResetAt(Account{
+		Platform: PlatformOpenAI,
+		Extra: map[string]any{
+			"codex_7d_reset_at": now.Add(-time.Minute).Format(time.RFC3339),
+		},
+	}, fallback, now))
+}
+
+func TestOAuthSleeperSnapshotRecordsRecoveryResetAt(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	groupID := int64(1)
+	windowReset := now.Add(2 * time.Hour)
+	reset7d := now.Add(24 * time.Hour)
+	account := withGroupIDs(openAISleeperAccount(1, 92, windowReset), groupID)
+	account.Extra["codex_7d_reset_at"] = reset7d.Format(time.RFC3339)
+	repo := &oauthSleeperRepoStub{
+		groups:   []OAuthSleeperGroup{{ID: groupID, Name: "OpenAI", Platform: PlatformOpenAI}},
+		accounts: []Account{account},
+	}
+	settings := *DefaultOAuthSleeperSettings()
+	settings.Enabled = true
+	settings.GroupIDs = []int64{groupID}
+	svc := NewOAuthSleeperService(repo, oauthSleeperSettingRepoWithSettings(t, settings))
+	svc.now = func() time.Time { return now }
+
+	svc.ObserveAccountUsageSnapshotUpdated(1)
+
+	require.Len(t, repo.events, 1)
+	require.Equal(t, "codex_5h", repo.events[0].Window)
+	require.Equal(t, reset7d, repo.events[0].ResetAt)
+}
+
 func TestOAuthSleeperScanUsesLowestSelectedGroupThreshold(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	repo := &oauthSleeperRepoStub{
