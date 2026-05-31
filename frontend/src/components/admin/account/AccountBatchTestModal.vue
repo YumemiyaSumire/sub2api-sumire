@@ -19,14 +19,30 @@
             :empty-text="t('admin.accounts.batchTestNoGroups')"
           />
         </div>
-        <Input
-          v-model="modelId"
-          :label="t('admin.accounts.batchTestModel')"
-          :placeholder="t('admin.accounts.batchTestModelPlaceholder')"
-          :disabled="running"
-          autocomplete="off"
-          @enter="startBatchTest"
-        />
+        <div class="space-y-2">
+          <Input
+            v-model="modelId"
+            :label="t('admin.accounts.batchTestModel')"
+            :placeholder="t('admin.accounts.batchTestModelPlaceholder')"
+            :disabled="running"
+            autocomplete="off"
+            @enter="startBatchTest"
+          />
+          <div class="flex flex-wrap gap-2" :aria-label="t('admin.accounts.batchTestModelPresets')">
+            <button
+              v-for="preset in modelPresets"
+              :key="preset.id"
+              type="button"
+              :data-test="`preset-model-${preset.id}`"
+              class="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-primary-600 dark:hover:bg-primary-900/20 dark:hover:text-primary-200"
+              :class="modelId.trim() === preset.id ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-600 dark:bg-primary-900/30 dark:text-primary-200' : ''"
+              :disabled="running"
+              @click="applyModelPreset(preset.id)"
+            >
+              {{ preset.label }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div
@@ -191,6 +207,12 @@ const modelId = ref('')
 const running = ref(false)
 const result = ref<BatchTestAccountsResponse | null>(null)
 const errorMessage = ref('')
+const modelPresets = [
+  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  { id: 'gpt-5.4', label: 'GPT-5.4' },
+  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+]
 
 const groupOptions = computed(() =>
   props.groups
@@ -223,6 +245,11 @@ watch(
 
 const handleClose = () => {
   emit('close')
+}
+
+const applyModelPreset = (presetModelId: string) => {
+  if (running.value) return
+  modelId.value = presetModelId
 }
 
 const startBatchTest = async () => {
