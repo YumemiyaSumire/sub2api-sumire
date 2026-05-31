@@ -26,6 +26,7 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
+      batchTestByGroup: vi.fn(),
       toggleSchedulable: vi.fn()
     },
     proxies: {
@@ -84,6 +85,51 @@ const BulkEditAccountModalStub = {
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
 }
 
+const AccountBatchTestModalStub = {
+  props: ['show', 'groups'],
+  template: '<div data-test="batch-test-modal" :data-show="String(show)" :data-groups-count="groups?.length ?? 0"></div>'
+}
+
+function mountAccountsView() {
+  return mount(AccountsView, {
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot /></div>' },
+        TablePageLayout: {
+          template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+        },
+        DataTable: DataTableStub,
+        Pagination: true,
+        ConfirmDialog: true,
+        AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+        AccountTableFilters: { template: '<div></div>' },
+        AccountBulkActionsBar: AccountBulkActionsBarStub,
+        AccountActionMenu: true,
+        ImportDataModal: true,
+        ReAuthAccountModal: true,
+        AccountTestModal: true,
+        AccountBatchTestModal: AccountBatchTestModalStub,
+        AccountStatsModal: true,
+        ScheduledTestsPanel: true,
+        SyncFromCrsModal: true,
+        TempUnschedStatusModal: true,
+        ErrorPassthroughRulesModal: true,
+        TLSFingerprintProfilesModal: true,
+        CreateAccountModal: true,
+        EditAccountModal: true,
+        BulkEditAccountModal: BulkEditAccountModalStub,
+        PlatformTypeBadge: true,
+        AccountCapacityCell: true,
+        AccountStatusIndicator: true,
+        AccountTodayStatsCell: true,
+        AccountGroupsCell: true,
+        AccountUsageCell: true,
+        Icon: true
+      }
+    }
+  })
+}
+
 describe('admin AccountsView bulk edit scope', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -112,42 +158,7 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
-    const wrapper = mount(AccountsView, {
-      global: {
-        stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
-          TablePageLayout: {
-            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
-          },
-          DataTable: DataTableStub,
-          Pagination: true,
-          ConfirmDialog: true,
-          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
-          AccountTableFilters: { template: '<div></div>' },
-          AccountBulkActionsBar: AccountBulkActionsBarStub,
-          AccountActionMenu: true,
-          ImportDataModal: true,
-          ReAuthAccountModal: true,
-          AccountTestModal: true,
-          AccountStatsModal: true,
-          ScheduledTestsPanel: true,
-          SyncFromCrsModal: true,
-          TempUnschedStatusModal: true,
-          ErrorPassthroughRulesModal: true,
-          TLSFingerprintProfilesModal: true,
-          CreateAccountModal: true,
-          EditAccountModal: true,
-          BulkEditAccountModal: BulkEditAccountModalStub,
-          PlatformTypeBadge: true,
-          AccountCapacityCell: true,
-          AccountStatusIndicator: true,
-          AccountTodayStatsCell: true,
-          AccountGroupsCell: true,
-          AccountUsageCell: true,
-          Icon: true
-        }
-      }
-    })
+    const wrapper = mountAccountsView()
 
     await flushPromises()
     await wrapper.get('[data-test="edit-filtered"]').trigger('click')
@@ -177,42 +188,7 @@ describe('admin AccountsView bulk edit scope', () => {
       pages: 1
     })
 
-    const wrapper = mount(AccountsView, {
-      global: {
-        stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
-          TablePageLayout: {
-            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
-          },
-          DataTable: DataTableStub,
-          Pagination: true,
-          ConfirmDialog: true,
-          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
-          AccountTableFilters: { template: '<div></div>' },
-          AccountBulkActionsBar: AccountBulkActionsBarStub,
-          AccountActionMenu: true,
-          ImportDataModal: true,
-          ReAuthAccountModal: true,
-          AccountTestModal: true,
-          AccountStatsModal: true,
-          ScheduledTestsPanel: true,
-          SyncFromCrsModal: true,
-          TempUnschedStatusModal: true,
-          ErrorPassthroughRulesModal: true,
-          TLSFingerprintProfilesModal: true,
-          CreateAccountModal: true,
-          EditAccountModal: true,
-          BulkEditAccountModal: BulkEditAccountModalStub,
-          PlatformTypeBadge: true,
-          AccountCapacityCell: true,
-          AccountStatusIndicator: true,
-          AccountTodayStatsCell: true,
-          AccountGroupsCell: true,
-          AccountUsageCell: true,
-          Icon: true
-        }
-      }
-    })
+    const wrapper = mountAccountsView()
 
     await flushPromises()
 
@@ -223,5 +199,35 @@ describe('admin AccountsView bulk edit scope', () => {
       label: 'admin.accounts.columns.createdAt',
       sortable: true
     })
+  })
+
+  it('shows batch test entry in more actions and opens the modal', async () => {
+    getAllGroups.mockResolvedValue([
+      {
+        id: 1,
+        name: 'Anthropic Group',
+        platform: 'anthropic',
+        status: 'active'
+      }
+    ])
+
+    const wrapper = mountAccountsView()
+    await flushPromises()
+
+    const moreButton = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.accounts.moreActions')
+    )
+    expect(moreButton).toBeTruthy()
+    await moreButton!.trigger('click')
+
+    const batchEntry = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.accounts.batchTestConnection')
+    )
+    expect(batchEntry).toBeTruthy()
+    await batchEntry!.trigger('click')
+
+    const modal = wrapper.get('[data-test="batch-test-modal"]')
+    expect(modal.attributes('data-show')).toBe('true')
+    expect(modal.attributes('data-groups-count')).toBe('1')
   })
 })

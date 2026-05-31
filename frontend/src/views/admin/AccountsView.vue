@@ -119,6 +119,12 @@
                         {{ t('admin.accounts.toolActions') }}
                       </div>
                     </div>
+                    <button class="account-tools-menu-item" @click="openBatchTest">
+                      <span class="account-tools-menu-icon bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300">
+                        <Icon name="beaker" size="sm" />
+                      </span>
+                      <span class="flex-1 text-left">{{ t('admin.accounts.batchTestConnection') }}</span>
+                    </button>
                     <button class="account-tools-menu-item" @click="openErrorPassthrough">
                       <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
                         <Icon name="shield" size="sm" />
@@ -422,6 +428,7 @@
     </ConfirmDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
+    <AccountBatchTestModal :show="showBatchTest" :groups="groups" @close="showBatchTest = false" />
   </AppLayout>
 </template>
 
@@ -449,6 +456,7 @@ import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
+import AccountBatchTestModal from '@/components/admin/account/AccountBatchTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -527,6 +535,7 @@ const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
 const showStats = ref(false)
+const showBatchTest = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
 const edAcc = ref<Account | null>(null)
@@ -937,6 +946,7 @@ const isAnyModalOpen = computed(() => {
     showReAuth.value ||
     showTest.value ||
     showStats.value ||
+    showBatchTest.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
     showTLSFingerprintProfiles.value
@@ -1072,6 +1082,11 @@ const openExportDataDialogFromMenu = () => {
 const openErrorPassthrough = () => {
   closeAccountToolsDropdown()
   showErrorPassthrough.value = true
+}
+
+const openBatchTest = () => {
+  closeAccountToolsDropdown()
+  showBatchTest.value = true
 }
 
 const openTLSFingerprintProfiles = () => {

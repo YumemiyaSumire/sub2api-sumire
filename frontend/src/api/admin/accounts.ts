@@ -667,6 +667,38 @@ export interface BatchOperationResult {
   warnings?: Array<{ account_id: number; warning: string }>
 }
 
+export interface BatchTestAccountResult {
+  account_id: number
+  account_name: string
+  status: 'success' | 'failed'
+  latency_ms: number
+  response_text?: string
+  error_message?: string
+}
+
+export interface BatchTestAccountsResponse {
+  group_id: number
+  model_id: string
+  total: number
+  success: number
+  failed: number
+  results: BatchTestAccountResult[]
+}
+
+/**
+ * Test all accounts in one selected group with a shared model ID.
+ * @param groupId - Real group ID to test
+ * @param modelId - Model ID used for every account
+ * @returns Batch test summary and per-account results
+ */
+export async function batchTestByGroup(groupId: number, modelId: string): Promise<BatchTestAccountsResponse> {
+  const { data } = await apiClient.post<BatchTestAccountsResponse>('/admin/accounts/batch-test', {
+    group_id: groupId,
+    model_id: modelId
+  })
+  return data
+}
+
 /**
  * Revert account proxy to original before fallback
  * @param id - Account ID
@@ -839,6 +871,7 @@ export const accountsAPI = {
   importCodexSession,
   createOpenAICodexPAT,
   getAntigravityDefaultModelMapping,
+  batchTestByGroup,
   batchClearError,
   batchRefresh,
   setPrivacy,

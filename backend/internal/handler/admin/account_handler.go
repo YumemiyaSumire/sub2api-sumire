@@ -967,6 +967,11 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type BatchTestAccountsRequest struct {
+	GroupID int64  `json:"group_id" binding:"required"`
+	ModelID string `json:"model_id" binding:"required"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -1005,6 +1010,38 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// BatchTest handles testing every account in a selected group.
+// POST /api/v1/admin/accounts/batch-test
+func (h *AccountHandler) BatchTest(c *gin.Context) {
+	var req BatchTestAccountsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	req.ModelID = strings.TrimSpace(req.ModelID)
+	if req.GroupID <= 0 {
+		response.BadRequest(c, "group_id is required")
+		return
+	}
+	if req.ModelID == "" {
+		response.BadRequest(c, "model_id is required")
+		return
+	}
+	if h.accountTestService == nil {
+		response.InternalError(c, "Account test service is not configured")
+		return
+	}
+
+	result, err := h.accountTestService.BatchTestByGroup(c.Request.Context(), req.GroupID, req.ModelID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, result)
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.
