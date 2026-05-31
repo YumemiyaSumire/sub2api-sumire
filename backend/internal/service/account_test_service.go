@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
@@ -70,6 +72,26 @@ type AccountTestService struct {
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
+}
+
+// BatchAccountTestResult is the per-account result returned by a grouped batch test.
+type BatchAccountTestResult struct {
+	AccountID    int64  `json:"account_id"`
+	AccountName  string `json:"account_name"`
+	Status       string `json:"status"`
+	LatencyMs    int64  `json:"latency_ms"`
+	ResponseText string `json:"response_text,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+// BatchAccountTestResponse summarizes a grouped batch account test.
+type BatchAccountTestResponse struct {
+	GroupID int64                    `json:"group_id"`
+	ModelID string                   `json:"model_id"`
+	Total   int                      `json:"total"`
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BatchAccountTestResult `json:"results"`
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -1711,6 +1733,86 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
 	}, nil
+}
+
+// BatchTestByGroup tests every account assigned to groupID with a shared model ID.
+func (s *AccountTestService) BatchTestByGroup(ctx context.Context, groupID int64, modelID string) (*BatchAccountTestResponse, error) {
+	if s == nil || s.accountRepo == nil {
+		return nil, errors.New("account test service is not configured")
+	}
+
+	accounts, err := s.accountRepo.ListByGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.SliceStable(accounts, func(i, j int) bool {
+		return strings.ToLower(accounts[i].Name) < strings.ToLower(accounts[j].Name)
+	})
+
+	response := &BatchAccountTestResponse{
+		GroupID: groupID,
+		ModelID: modelID,
+		Total:   len(accounts),
+		Results: make([]BatchAccountTestResult, len(accounts)),
+	}
+	if len(accounts) == 0 {
+		return response, nil
+	}
+
+	const maxConcurrency = 5
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
+	for i := range accounts {
+		index := i
+		account := accounts[i]
+		response.Results[index] = BatchAccountTestResult{
+			AccountID:   account.ID,
+			AccountName: account.Name,
+			Status:      "failed",
+		}
+
+		g.Go(func() error {
+			result, testErr := s.RunTestBackground(gctx, account.ID, modelID)
+			item := BatchAccountTestResult{
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Status:      "failed",
+			}
+
+			if result != nil {
+				item.Status = result.Status
+				item.LatencyMs = result.LatencyMs
+				item.ResponseText = result.ResponseText
+				item.ErrorMessage = result.ErrorMessage
+			}
+			if testErr != nil {
+				item.Status = "failed"
+				if item.ErrorMessage == "" {
+					item.ErrorMessage = testErr.Error()
+				}
+			}
+			if item.Status != "success" && item.ErrorMessage == "" {
+				item.ErrorMessage = "account test failed"
+			}
+
+			response.Results[index] = item
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	for _, result := range response.Results {
+		if result.Status == "success" {
+			response.Success++
+		} else {
+			response.Failed++
+		}
+	}
+
+	return response, nil
 }
 
 // parseTestSSEOutput extracts response text and error message from captured SSE output.
