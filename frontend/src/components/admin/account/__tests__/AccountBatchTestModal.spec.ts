@@ -136,6 +136,23 @@ describe('AccountBatchTestModal', () => {
     expect(wrapper.text()).toContain('admin.accounts.batchTestDone')
   })
 
+  it('offers gpt-5.4-mini as a preset test model', async () => {
+    const wrapper = mountModal()
+
+    await wrapper.get('[data-test="group-select"]').setValue('2')
+    await wrapper.get('[data-test="preset-model-gpt-5.4-mini"]').trigger('click')
+
+    expect((wrapper.get('[data-test="model-input"]').element as HTMLInputElement).value).toBe('gpt-5.4-mini')
+
+    const startButton = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.accounts.batchTestStart')
+    )
+    await startButton!.trigger('click')
+    await flushPromises()
+
+    expect(batchTestByGroup).toHaveBeenCalledWith(2, 'gpt-5.4-mini')
+  })
+
   it('renders empty group message', async () => {
     batchTestByGroup.mockResolvedValue({
       group_id: 1,
