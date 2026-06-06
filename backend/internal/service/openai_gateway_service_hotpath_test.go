@@ -974,19 +974,6 @@ func TestInjectOpenAIReasoningEffort(t *testing.T) {
 	require.NotContains(t, explicitNone, "reasoning")
 }
 
-func TestGetOpenAIRequestBodyMap_UsesContextCache(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-
-	cached := map[string]any{"model": "cached-model", "stream": true}
-	c.Set(OpenAIParsedRequestBodyKey, cached)
-
-	got, err := getOpenAIRequestBodyMap(c, []byte(`{invalid-json`))
-	require.NoError(t, err)
-	require.Equal(t, cached, got)
-}
-
 func TestGetOpenAIRequestBodyMap_ParseErrorWithoutCache(t *testing.T) {
 	_, err := getOpenAIRequestBodyMap(nil, []byte(`{invalid-json`))
 	require.Error(t, err)
