@@ -2031,6 +2031,30 @@ export interface UpdateScheduledTestPlanRequest {
   auto_recover?: boolean
 }
 
+export interface ScheduledGroupTestPlan {
+  id: number
+  group_id: number
+  account_name_filter: string
+  model_id: string
+  enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateScheduledGroupTestPlanRequest {
+  group_id: number
+  account_name_filter?: string
+  enabled?: boolean
+}
+
+export interface UpdateScheduledGroupTestPlanRequest {
+  group_id?: number
+  account_name_filter?: string
+  enabled?: boolean
+}
+
 // Payment types
 export type { SubscriptionPlan, PaymentOrder, CheckoutInfoResponse } from './payment'
 

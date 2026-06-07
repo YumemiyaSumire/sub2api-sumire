@@ -3237,6 +3237,7 @@ export default {
       dataActions: '数据操作',
       toolActions: '工具',
       batchTestConnection: '批量测试连接',
+      scheduledGroupTestConnection: '分组自动测试连接',
       viewColumns: '列显示',
       selectedCount: '已选 {count}',
       dataExportConfirmMessage: '导出的数据包含账号与代理的敏感信息，请妥善保存。',
@@ -4532,6 +4533,39 @@ export default {
       maxResultsTooltipRange: '推荐填写范围：一般可填 20 到 200。只关注近期可用性时可填 20-50；需要回看较长时间的波动趋势时可填 100-200。',
       autoRecover: '自动恢复',
       autoRecoverHelp: '测试成功后自动恢复异常状态的账号'
+    },
+
+    // Scheduled Group Tests
+    scheduledGroupTests: {
+      title: '分组自动测试连接',
+      description: '为指定分组创建自动连接测试计划，可按账号名称筛选；启用后立即运行一次，之后每 55-65 分钟随机运行。',
+      logsOnly: '测试固定使用模型 gpt-5.5，结果只写入后端系统日志。',
+      addPlan: '添加计划',
+      editPlan: '编辑计划',
+      deletePlan: '删除计划',
+      group: '分组',
+      groupPlaceholder: '选择要测试的分组',
+      noGroups: '暂无可选分组',
+      accountNameFilter: '账号名称筛选',
+      accountNameFilterPlaceholder: '输入账号名关键字，可留空',
+      emptyFilterMeansAll: '留空表示测试该分组内全部可调度账号。',
+      fixedModel: '固定测试模型',
+      enabled: '启用',
+      disabled: '停用',
+      lastRun: '上次运行',
+      nextRun: '下次运行',
+      wholeGroup: '全组',
+      noPlans: '暂无分组自动测试计划',
+      confirmDelete: '确定要删除此分组自动测试计划吗？',
+      createSuccess: '计划创建成功',
+      updateSuccess: '计划更新成功',
+      deleteSuccess: '计划删除成功',
+      loadFailed: '加载计划失败',
+      createFailed: '创建计划失败',
+      updateFailed: '更新计划失败',
+      deleteFailed: '删除计划失败',
+      save: '保存',
+      saving: '保存中...'
     },
 
     // Proxies Management

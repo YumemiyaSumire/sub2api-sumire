@@ -29,6 +29,12 @@ vi.mock('@/api/admin', () => ({
       batchTestByGroup: vi.fn(),
       toggleSchedulable: vi.fn()
     },
+    scheduledGroupTests: {
+      list: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn()
+    },
     proxies: {
       getAll: getAllProxies
     },
@@ -90,6 +96,11 @@ const AccountBatchTestModalStub = {
   template: '<div data-test="batch-test-modal" :data-show="String(show)" :data-groups-count="groups?.length ?? 0"></div>'
 }
 
+const ScheduledGroupTestsPanelStub = {
+  props: ['show', 'groups'],
+  template: '<div data-test="scheduled-group-tests-panel" :data-show="String(show)" :data-groups-count="groups?.length ?? 0"></div>'
+}
+
 function mountAccountsView() {
   return mount(AccountsView, {
     global: {
@@ -109,6 +120,7 @@ function mountAccountsView() {
         ReAuthAccountModal: true,
         AccountTestModal: true,
         AccountBatchTestModal: AccountBatchTestModalStub,
+        ScheduledGroupTestsPanel: ScheduledGroupTestsPanelStub,
         AccountStatsModal: true,
         ScheduledTestsPanel: true,
         SyncFromCrsModal: true,
@@ -229,5 +241,35 @@ describe('admin AccountsView bulk edit scope', () => {
     const modal = wrapper.get('[data-test="batch-test-modal"]')
     expect(modal.attributes('data-show')).toBe('true')
     expect(modal.attributes('data-groups-count')).toBe('1')
+  })
+
+  it('shows scheduled group test entry in more actions and opens the panel', async () => {
+    getAllGroups.mockResolvedValue([
+      {
+        id: 1,
+        name: 'OpenAI Group',
+        platform: 'openai',
+        status: 'active'
+      }
+    ])
+
+    const wrapper = mountAccountsView()
+    await flushPromises()
+
+    const moreButton = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.accounts.moreActions')
+    )
+    expect(moreButton).toBeTruthy()
+    await moreButton!.trigger('click')
+
+    const scheduledEntry = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.accounts.scheduledGroupTestConnection')
+    )
+    expect(scheduledEntry).toBeTruthy()
+    await scheduledEntry!.trigger('click')
+
+    const panel = wrapper.get('[data-test="scheduled-group-tests-panel"]')
+    expect(panel.attributes('data-show')).toBe('true')
+    expect(panel.attributes('data-groups-count')).toBe('1')
   })
 })

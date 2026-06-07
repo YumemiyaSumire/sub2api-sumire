@@ -94,6 +94,7 @@ func RegisterAdminRoutes(
 
 		// 定时测试计划
 		registerScheduledTestRoutes(admin, h)
+		registerScheduledGroupTestRoutes(admin, h)
 
 		// 渠道管理
 		registerChannelRoutes(admin, h)
@@ -609,6 +610,16 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 	// Nested under accounts
 	admin.GET("/accounts/:id/scheduled-test-plans", h.Admin.ScheduledTest.ListByAccount)
+}
+
+func registerScheduledGroupTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	plans := admin.Group("/scheduled-group-test-plans")
+	{
+		plans.GET("", h.Admin.ScheduledGroupTest.List)
+		plans.POST("", h.Admin.ScheduledGroupTest.Create)
+		plans.PUT("/:id", h.Admin.ScheduledGroupTest.Update)
+		plans.DELETE("/:id", h.Admin.ScheduledGroupTest.Delete)
+	}
 }
 
 func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

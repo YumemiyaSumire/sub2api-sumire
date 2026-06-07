@@ -125,6 +125,12 @@
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.batchTestConnection') }}</span>
                     </button>
+                    <button class="account-tools-menu-item" @click="openScheduledGroupTests">
+                      <span class="account-tools-menu-icon bg-cyan-50 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-300">
+                        <Icon name="calendar" size="sm" />
+                      </span>
+                      <span class="flex-1 text-left">{{ t('admin.accounts.scheduledGroupTestConnection') }}</span>
+                    </button>
                     <button class="account-tools-menu-item" @click="openErrorPassthrough">
                       <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
                         <Icon name="shield" size="sm" />
@@ -429,6 +435,7 @@
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
     <AccountBatchTestModal :show="showBatchTest" :groups="groups" @close="showBatchTest = false" />
+    <ScheduledGroupTestsPanel :show="showScheduledGroupTests" :groups="groups" @close="showScheduledGroupTests = false" />
   </AppLayout>
 </template>
 
@@ -457,6 +464,7 @@ import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountBatchTestModal from '@/components/admin/account/AccountBatchTestModal.vue'
+import ScheduledGroupTestsPanel from '@/components/admin/account/ScheduledGroupTestsPanel.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -536,6 +544,7 @@ const showReAuth = ref(false)
 const showTest = ref(false)
 const showStats = ref(false)
 const showBatchTest = ref(false)
+const showScheduledGroupTests = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
 const edAcc = ref<Account | null>(null)
@@ -947,6 +956,7 @@ const isAnyModalOpen = computed(() => {
     showTest.value ||
     showStats.value ||
     showBatchTest.value ||
+    showScheduledGroupTests.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
     showTLSFingerprintProfiles.value
@@ -1087,6 +1097,11 @@ const openErrorPassthrough = () => {
 const openBatchTest = () => {
   closeAccountToolsDropdown()
   showBatchTest.value = true
+}
+
+const openScheduledGroupTests = () => {
+  closeAccountToolsDropdown()
+  showScheduledGroupTests.value = true
 }
 
 const openTLSFingerprintProfiles = () => {

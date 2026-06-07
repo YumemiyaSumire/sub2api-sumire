@@ -432,6 +432,25 @@ func ProvideScheduledTestRunnerService(
 	return svc
 }
 
+// ProvideScheduledGroupTestService creates ScheduledGroupTestService.
+func ProvideScheduledGroupTestService(
+	planRepo ScheduledGroupTestPlanRepository,
+) *ScheduledGroupTestService {
+	return NewScheduledGroupTestService(planRepo)
+}
+
+// ProvideScheduledGroupTestRunnerService creates and starts ScheduledGroupTestRunnerService.
+func ProvideScheduledGroupTestRunnerService(
+	planRepo ScheduledGroupTestPlanRepository,
+	accountRepo AccountRepository,
+	accountTestSvc *AccountTestService,
+	cfg *config.Config,
+) *ScheduledGroupTestRunnerService {
+	svc := NewScheduledGroupTestRunnerService(planRepo, accountRepo, accountTestSvc, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideOpsScheduledReportService creates and starts OpsScheduledReportService.
 func ProvideOpsScheduledReportService(
 	opsService *OpsService,
@@ -647,6 +666,8 @@ var ProviderSet = wire.NewSet(
 	ProvideIdempotencyCleanupService,
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
+	ProvideScheduledGroupTestService,
+	ProvideScheduledGroupTestRunnerService,
 	NewGroupCapacityService,
 	NewChannelService,
 	NewModelPricingResolver,

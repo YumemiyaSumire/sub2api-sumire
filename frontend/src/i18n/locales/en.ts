@@ -3163,6 +3163,7 @@ export default {
       dataActions: 'Data',
       toolActions: 'Tools',
       batchTestConnection: 'Batch Test Connection',
+      scheduledGroupTestConnection: 'Scheduled Group Connection Tests',
       viewColumns: 'Columns',
       selectedCount: '{count} selected',
       dataExportConfirmMessage: 'The exported data contains sensitive account and proxy information. Store it securely.',
@@ -4442,6 +4443,39 @@ export default {
       maxResultsTooltipRange: 'Recommended range: usually 20 to 200. Use 20-50 when you only care about recent health status, or 100-200 if you want a longer trend history.',
       autoRecover: 'Auto Recover',
       autoRecoverHelp: 'Automatically recover account from error/rate-limited state on successful test'
+    },
+
+    // Scheduled Group Tests
+    scheduledGroupTests: {
+      title: 'Scheduled Group Connection Tests',
+      description: 'Create automatic connection test plans for selected groups, optionally filtered by account name. Enabled plans run immediately, then every randomized 55-65 minutes.',
+      logsOnly: 'Tests always use gpt-5.5, and results are written only to backend system logs.',
+      addPlan: 'Add Plan',
+      editPlan: 'Edit Plan',
+      deletePlan: 'Delete Plan',
+      group: 'Group',
+      groupPlaceholder: 'Select a group to test',
+      noGroups: 'No groups available',
+      accountNameFilter: 'Account Name Filter',
+      accountNameFilterPlaceholder: 'Enter account name keyword, or leave empty',
+      emptyFilterMeansAll: 'Leave empty to test all schedulable accounts in the group.',
+      fixedModel: 'Fixed Test Model',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      lastRun: 'Last Run',
+      nextRun: 'Next Run',
+      wholeGroup: 'Whole group',
+      noPlans: 'No scheduled group test plans',
+      confirmDelete: 'Are you sure you want to delete this scheduled group test plan?',
+      createSuccess: 'Plan created successfully',
+      updateSuccess: 'Plan updated successfully',
+      deleteSuccess: 'Plan deleted successfully',
+      loadFailed: 'Failed to load plans',
+      createFailed: 'Failed to create plan',
+      updateFailed: 'Failed to update plan',
+      deleteFailed: 'Failed to delete plan',
+      save: 'Save',
+      saving: 'Saving...'
     },
 
     // Proxies
