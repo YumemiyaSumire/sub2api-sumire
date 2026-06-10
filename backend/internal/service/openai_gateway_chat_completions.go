@@ -90,7 +90,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	originalModel := chatReq.Model
 	clientStream := chatReq.Stream
-	includeUsage := chatReq.StreamOptions != nil && chatReq.StreamOptions.IncludeUsage
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
 	clientPromptCacheRetention := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_retention").String())
 	if chatReq.ReasoningEffort == "" && reasoningEffort != nil {

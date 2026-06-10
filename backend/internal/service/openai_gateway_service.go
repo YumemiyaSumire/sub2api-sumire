@@ -1768,6 +1768,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	promptCacheApplyResult := openAIPromptCacheApplyResult{}
 	if openAIAutoPromptCacheEnabled() || clientPromptCacheRetention != "" || openAIPromptCacheForwardDebugEnabled() {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
@@ -1792,7 +1793,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if restoreOpenAIClientPromptCacheRetention(decoded, clientPromptCacheRetention, promptCacheOptions) {
 			markDecodedModified()
 		}
-		promptCacheApplyResult := applyOpenAIAutoPromptCacheToMap(decoded, promptCacheOptions)
+		promptCacheApplyResult = applyOpenAIAutoPromptCacheToMap(decoded, promptCacheOptions)
 		if promptCacheApplyResult.PromptCacheKey != "" {
 			promptCacheKey = promptCacheApplyResult.PromptCacheKey
 		}
