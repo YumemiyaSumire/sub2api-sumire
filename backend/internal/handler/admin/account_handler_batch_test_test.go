@@ -93,6 +93,7 @@ func newBatchTestService(accounts []service.Account, upstream service.HTTPUpstre
 		nil,
 		nil,
 		nil,
+		nil,
 		upstream,
 		&config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
 		nil,

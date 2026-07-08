@@ -11,7 +11,6 @@ export function getPersistedPageSize(fallback = getConfiguredTableDefaultPageSiz
   if (hasConfiguredTableDefaultPageSize()) {
     return normalizeTablePageSize(configuredDefault)
   }
-  }
 
   if (typeof window !== 'undefined') {
     try {

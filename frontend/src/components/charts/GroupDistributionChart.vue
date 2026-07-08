@@ -264,5 +264,4 @@ const formatCost = (value: number | null | undefined): string => {
   }
   return safeValue.toFixed(4)
 }
-}
 </script>

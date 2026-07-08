@@ -520,7 +520,6 @@ async function handleVerify(): Promise<void> {
         '/auth/oauth/pending/create-account',
         payload
       )
-      )
       if (isPendingOAuthSessionResponse(data)) {
         sessionStorage.removeItem('register_data')
         persistPendingOAuthSession(data.provider || pendingProvider.value, data.redirect)
